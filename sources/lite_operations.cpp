@@ -393,7 +393,7 @@ namespace lite
 
     // 写数据到打开的文件中，通过File对象的write()实现，将buf中size大的数据写入
     // 注意write()实现的函数调用关系，这里有点复杂
-    // path是明文路径，在这里实际没有用到，是通过open后获得的UnixFileStream对象中的fd来访问密文
+    // path是明文路径，在这里实际没有用到，是通过open后获得的UnixFileStream对象中的fd来访问密文111测试
     int write(const char* path,
               const char* buf,
               size_t size,
