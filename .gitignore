@@ -1,0 +1,13 @@
+.DS_Store
+._*
+build/
+*-build/
+build-*/
+make/
+*.exe
+*.obj
+.vs
+.vscode
+out/
+CMakeSettings.json
+__pycache__

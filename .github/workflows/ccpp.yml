@@ -1,0 +1,79 @@
+name: C/C++ CI
+
+on: [push, pull_request]
+
+env:
+  PYTHONUTF8: 1
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-20.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v1
+        with:
+          submodules: true
+      - uses: actions/setup-python@v1
+        with:
+          python-version: "3.x"
+      - name: install
+        run: sudo apt-get install fuse libfuse-dev
+      - name: configure
+        run: mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release ..
+      - name: build
+        run: cmake --build build --config Release
+      - name: test
+        run: cd build && ctest -V -C Release
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          path: build/securefs
+          name: securefs-linux-amd64
+  build-mac:
+    runs-on: macos-10.15
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v1
+        with:
+          submodules: true
+      - uses: actions/setup-python@v1
+        with:
+          python-version: "3.x"
+      - name: pip
+        run: pip install xattr
+      - name: install
+        run: brew install macfuse
+      - name: configure
+        run: mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release ..
+      - name: build
+        run: cmake --build build --config Release
+      - name: test
+        run: cd build && ctest -V -C Release
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          path: build/securefs
+          name: securefs-macos-amd64
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v1
+        with:
+          submodules: true
+      - uses: actions/setup-python@v1
+        with:
+          python-version: "3.x"
+      - name: install
+        run: choco install winfsp
+      - name: configure
+        run: mkdir build && cd build && cmake -DCMAKE_BUILD_TYPE=Release ..
+      - name: build
+        run: cmake --build build --config Release
+      - name: test
+        run: cd build && ctest -V -C Release
+      - name: upload
+        uses: actions/upload-artifact@v1
+        with:
+          path: build/Release/securefs.exe
+          name: securefs-windows-amd64
