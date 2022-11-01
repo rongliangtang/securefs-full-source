@@ -43,6 +43,7 @@ std::string strprintf(const char* format, ...)
     return vstrprintf(format, args);
 }
 
+// 全部转换为小写
 std::string to_lower(const std::string& str)
 {
     std::string result = str;
@@ -54,6 +55,7 @@ std::string to_lower(const std::string& str)
     return result;
 }
 
+// 
 void parse_hex(StringRef hex, byte* output, size_t len)
 {
     if (hex.size() % 2 != 0)
@@ -221,11 +223,13 @@ std::string hexify(const byte* data, size_t length)
 static const char* UPPER_BASE32_ALPHABET = "ABCDEFGHIJKMNPQRSTUVWXYZ23456789";
 static const char* LOWER_BASE32_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789";
 
+// 利用当前字节、下一个字节和当前偏移位置，计算出base32编码字母表位置
 static size_t get_alphabet_index(byte b, byte next, size_t i)
 {
     switch (i)
     {
     case 0:
+        // 不带前缀则默认表示十进制，u表示无符号整数
         return (b >> 3) & 31u;
     case 1:
         return (b >> 2) & 31u;
@@ -245,9 +249,11 @@ static size_t get_alphabet_index(byte b, byte next, size_t i)
     throwInvalidArgumentException("Invalid index within byte");
 }
 
-// 将输入字符数组编码成base32格式输出字符串
+// base32编码
 void base32_encode(const byte* input, size_t size, std::string& output)
 {
+    // 将output里面的数据清空，并设置output的大小
+    // +4的目的，使其能够正确计算出base32编码后的output的大小
     output.clear();
     output.reserve((size * 8 + 4) / 5);
 
@@ -261,6 +267,7 @@ void base32_encode(const byte* input, size_t size, std::string& output)
         if (alphabet_index >= 32)
             throw std::out_of_range("base32_encode encounters internal error");
 
+        // 查大写表，把结果放入output中
         output.push_back(UPPER_BASE32_ALPHABET[alphabet_index]);
     }
 }
@@ -387,27 +394,38 @@ bool is_ascii(StringRef str)
 }
 // 将字符串按 文件名规范化模式 进行转转换，返回char型的unique_ptr
 // 文件名规范化模式。有效值:none、casefold、nfc、 casefold + nfc。在macOS上默认为nfc，在其他平台上不设置
-// 各个文件名规范化模式的区别是？？？
+// nfc是unicode标准化形式，为了使unicode编码在底层用相同的编码表示，所以需要标准化。因为有些unicode外表看起来一样，其实编码是不一样的，比如含有组合字体的编码。
 ManagedCharPointer transform(StringRef str, bool case_fold, bool nfc)
 {
+    // 如果不设置所有的字符为小写且（不开启nfc或str中字符都是ascii）
     if (!case_fold && (!nfc || is_ascii(str)))
     {
         return ManagedCharPointer(str.c_str(), [](const char*) {});
     }
-    // utf8proc_uint8_t实际为char
+    // utf8proc_uint8_t实际为char，定义一个char*
     utf8proc_uint8_t* result = nullptr;
     // Unicode版本稳定性必须得到尊重
     int options = UTF8PROC_STABLE;
+    // 如果开启设置所有的字符为小写
     if (case_fold)
     {
-        // 执行unicode大小写折叠，以便能够进行不区分大小写的字符串比较
+        // 设置执行unicode大小写折叠标志位，以便能够进行不区分大小写的字符串比较
         options |= UTF8PROC_CASEFOLD;
     }
+    // 如果开启nfc
     if (nfc)
     {
-        // 返回具有分解字符的结果
+        // 设置返回具有组合字符的结果标志位
         options |= UTF8PROC_COMPOSE;
     }
+    /*
+    utf8proc_ssize_t utf8proc_map	(	
+        const utf8proc_uint8_t * 	str,
+        utf8proc_ssize_t 	strlen,
+        utf8proc_uint8_t ** 	dstptr,
+        utf8proc_option_t 	options 
+    )	
+    */
     // 将str指向的给定UTF-8字符串映射到一个新的UTF-8字符串 result，由malloc动态分配并通过dstptr返回。
     // 如果成功，则返回新字符串的长度，否则返回负数错误码。
     auto rc = utf8proc_map(reinterpret_cast<const utf8proc_uint8_t*>(str.c_str()),
@@ -419,7 +437,7 @@ ManagedCharPointer transform(StringRef str, bool case_fold, bool nfc)
     {
         throw UTF8ProcException(rc);
     }
-    // 返回一个char型的unique_ptr
+    // 返回一个char型的unique_ptr，deleter是一个匿名函数（当unique_str释放的时候，会执行deleter和析构函数）
     return ManagedCharPointer(reinterpret_cast<char*>(result),
                               [](const char* str) { free(const_cast<char*>(str)); });
 }

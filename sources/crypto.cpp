@@ -106,6 +106,7 @@ void AES_SIV::s2v(const void* plaintext,
     }
 }
 
+// AES_SIV算法的加密
 void AES_SIV::encrypt_and_authenticate(const void* plaintext,
                                        size_t text_len,
                                        const void* additional_data,
@@ -113,6 +114,7 @@ void AES_SIV::encrypt_and_authenticate(const void* plaintext,
                                        void* ciphertext,
                                        void* siv)
 {
+    // s2v的作用是生成siv？
     s2v(plaintext, text_len, additional_data, additional_len, siv);
     byte modded_iv[AES_SIV::IV_SIZE];
     memcpy(modded_iv, siv, AES_SIV::IV_SIZE);
@@ -126,6 +128,7 @@ void AES_SIV::encrypt_and_authenticate(const void* plaintext,
         static_cast<byte*>(ciphertext), static_cast<const byte*>(plaintext), text_len);
 }
 
+// AES_SIV算法的解密
 bool AES_SIV::decrypt_and_verify(const void* ciphertext,
                                  size_t text_len,
                                  const void* additional_data,

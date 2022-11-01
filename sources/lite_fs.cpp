@@ -55,32 +55,44 @@ namespace lite
         return strprintf("Invalid filename \"%s\"", m_filename.c_str());
     }
 
-    // 进行路径的加密，加密的流程没有太看懂？？输入明文就可以加密？？
+    // 进行明文路径的加密，来获取密文路径
     // 使用AES_SIV算法
     std::string encrypt_path(AES_SIV& encryptor, StringRef path)
     {
         byte buffer[2032];
+        // 存放加密后的结果
         std::string result;
+        // 由于添加了IV和base32编码，底层文件名比虚拟文件名长。因此，挂载的文件系统中的最大文件名长度总是比其底层文件系统短。
+        // reserve()是为容器预留空间，即为当前容器设定一个空间分配的阈值，但是并不会为容器直接allocate具体的空间，具体空间的分配是在创建对象时候进行分配得，超过了阀值会重新分配
+        // 根据path获取enc_path的长度，不对啊，iv没有加上去呀！！！reserve后的是容量下限，实际容量可以大于该值
         result.reserve((path.size() * 8 + 4) / 5);
+        // last_nonseparator_index表示上一个非分隔符/的坐标，即上一个/的后一个坐标
         size_t last_nonseparator_index = 0;
         std::string encoded_part;
 
+        // 处理整个path
         for (size_t i = 0; i <= path.size(); ++i)
         {
+            // 处理分隔符中的一块内容（也就是一个文件or目录的名称）
             if (i >= path.size() || path[i] == '/')
             {
                 if (i > last_nonseparator_index)
                 {
                     const char* slice = path.data() + last_nonseparator_index;
                     size_t slice_size = i - last_nonseparator_index;
+                    // 这一块内容的字节数 > 2000，则抛出异常
                     if (slice_size > 2000)
                         throwVFSException(ENAMETOOLONG);
                     // encrypt_and_authenticate(const void* plaintext,size_t text_len,const void* additional_data,size_t additional_len,void* ciphertext,void* siv)
+                    // buffer[IV_SIZE:]存的是密文，buffer[0:IV_SIZE]存的是iv
                     encryptor.encrypt_and_authenticate(
                         slice, slice_size, nullptr, 0, buffer + AES_SIV::IV_SIZE, buffer);
+                    // 将得到的buffer，大小是slice_size + IV_SIZE，进行base32编码
                     base32_encode(buffer, slice_size + AES_SIV::IV_SIZE, encoded_part);
+                    // 将这一块的内容加入到result中
                     result.append(encoded_part);
                 }
+                // i < path.size()时，放入/
                 if (i < path.size())
                     result.push_back('/');
                 last_nonseparator_index = i + 1;
@@ -135,10 +147,12 @@ namespace lite
     // 将path进行加密，返回加密结果（一样的输入会有一样的加密结果）
     std::string FileSystem::translate_path(StringRef path, bool preserve_leading_slash)
     {
+        // 如果path为空则直接返回空
         if (path.empty())
         {
             return {};
         }
+        // 如果path == '/'则根据preserve_leading_slash来判断返回'/'还是'.'
         else if (path.size() == 1 && path[0] == '/')
         {
             if (preserve_leading_slash)
@@ -150,15 +164,16 @@ namespace lite
                 return ".";
             }
         }
+        // 其他
         else
         {
             // 返回加密后的结果str
-            // transform()的作用是将字符串按 文件名规范化模式 进行转转换，返回char型的unique_ptr
+            // transform()的作用是将字符串按 文件名规范化模式 进行转换，返回char型的unique_ptr
             std::string str = lite::encrypt_path(
                 m_name_encryptor,
                 transform(path, m_flags & kOptionCaseFoldFileName, m_flags & kOptionNFCFileName)
                     .get());
-            // 将str[0]'/'删掉
+            // 如果preserve_leading_slash==false且str[0]=='/'，则将str[0]'/'删掉
             if (!preserve_leading_slash && !str.empty() && str[0] == '/')
             {
                 str.erase(str.begin());

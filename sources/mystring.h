@@ -14,7 +14,8 @@ typedef unsigned char byte;
 namespace securefs
 {
 // 一个模版类，类名是BasicStringRef
-// 作用是实现一个类似 T* 的数组，但是具备string那样所有功能的类，这样相比于string更具有灵活性
+// 作用是实现一个类似 T* 的数组，但是具备string那样所有功能的类，这样相比于string更具有灵活性（利用std::basic_string<CharT>实现）
+// 编写这个类的目的是什么？？？std::basic_string<CharT>都有这些功能
 template <class CharT>
 class BasicStringRef
 {
@@ -27,6 +28,7 @@ public:
     BasicStringRef(const CharT* str) : m_buffer(str), m_size(std::char_traits<CharT>::length(str))
     {
     }
+    // 通过这个构造函数，有隐式转换std::basic_string<CharT>到BasicStringRef<CharT>
     BasicStringRef(const std::basic_string<CharT>& str) : m_buffer(str.c_str()), m_size(str.size())
     {
     }
@@ -62,7 +64,7 @@ public:
     }
 };
 
-// 重载BasicStringRef类的符号操作，最后返回的都是string类型的数据
+// 重载BasicStringRef类的符号操作，最后返回的都是std::basic_string<CharT>类型的数据
 template <class CharT>
 inline std::basic_string<CharT> operator+(BasicStringRef<CharT> a, BasicStringRef<CharT> b)
 {
@@ -151,6 +153,7 @@ std::string escape_nonprintable(const char* str, size_t size);
 std::string case_fold(StringRef str);
 
 // ManagedCharPointer为char型的unique_ptr
+// void (*)(const char*)表示删除器函数指针类型
 using ManagedCharPointer = std::unique_ptr<const char, void (*)(const char*)>;
 // transform函数返回一个类型
 ManagedCharPointer transform(StringRef str, bool case_fold, bool nfc);
