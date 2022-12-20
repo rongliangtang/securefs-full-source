@@ -917,15 +917,27 @@ public:
             opt.block_size = config.block_size;
             opt.iv_size = config.iv_size;
 
-            // 创建FileSystemContext对象，具体类和方法的作用后面再看吧？
+            // 创建FileSystemContext对象并进行构造，这里的构造lock_stream并没有赋值，在mount的时候才创建并赋值给lock_stream
             operations::FileSystemContext fs(opt);
+            // DIRECTORY为FileBase定义的byte类型，用来表示type
+            // table为ShardedFileTableImpl
+            // root_id在构造的时候，初始化全为0
+            // root为FileBase类的多态，里面存放了数据文件流、元数据文件流
+            // root不是智能指针，但有一个智能指针存在m_files中
             auto root = fs.table.create_as(fs.root_id, FileBase::DIRECTORY);
+            // root_fp为root的引用
             auto& root_fp = *root;
+            // FileLockGuard与LockGuard略有不同：LockGuard实现对多个不同类上锁和flock文件锁，而FileLockGuard专门用于FileBase及其子类
             FileLockGuard file_lock_guard(root_fp);
+            // 设置uid，存在m_flags[1]中，通过调用OSService::getuid()来获取调用程序的用户id
             root_fp.set_uid(securefs::OSService::getuid());
+            // 设置gid，存在m_flags[2]中，通过调用OSService::getgid()来获取调用程序的组id
             root_fp.set_gid(securefs::OSService::getgid());
+            // 设置mode，存在m_flags[0]中，mode表示文件类型和访问权限
             root_fp.set_mode(S_IFDIR | 0755);
+            // 设置nlink，存在m_flags[3]中，nlink表示什么？？
             root_fp.set_nlink(1);
+            // 刷新数据，待调试了解？？
             root_fp.flush();
         }
         return 0;
@@ -1550,13 +1562,17 @@ public:
         }
 
         // 如果 启用的version < 4（即用的是Full format 1-3）会产生一个“.securefs.lock”文件
-        // “.securefs.lock”文件是什么作用？？当系统在运行的时候即挂载后才有这个文件
+        // “.securefs.lock”文件的作用是实现一个数据目录同时只能被一个securefs进程操作
+        // 不同的securefs进程会出现访问数据不一致的情况（用RAM做缓存所导致的？？？），这样进行操作容易出错，所以要防止多个securefs进程操作同一个数据目录
+        // 注意：lite format中的不同的securefs进程之间的数据是同步的，所以允许多个securefs进程操作同一个数据目录
         if (config.version < 4)
         {
             try
             {
                 // fsopt.root为一个OSService类型的shared_ptr
-                // “.securefs.lock”文件的权限设置为创建&执行&读
+                // “.securefs.lock”文件的权限设置为创建&O_EXCL&读
+                // 注意：O_EXCL表示打开的时候如果存在则返回错误信息
+                // 返回一个FileStream的多态UnixFileStream对象
                 fsopt.lock_stream = fsopt.root->open_file_stream(
                     securefs::operations::LOCK_FILENAME, O_CREAT | O_EXCL | O_RDONLY, 0644);
             }
@@ -1572,6 +1588,7 @@ public:
                           e.what(),
                           data_dir.getValue().c_str(),
                           securefs::operations::LOCK_FILENAME);
+                // 捕获异常后，退出mount函数，即没有挂载成功
                 return 18;
             }
         }
@@ -1605,11 +1622,13 @@ public:
         struct fuse_operations operations;
         if (config.version <= 3)
         {
+            // operations命名空间
             operations::init_fuse_operations(&operations, native_xattr);
         }
         // 如果启用的version=4，则fuse基本操作应该用lite版
         else
         {
+            // lite命名空间
             // 初始化fuse_operation，实现fuse定义的函数集
             lite::init_fuse_operations(&operations, native_xattr);
         }
@@ -1691,8 +1710,7 @@ public:
 
         operations::MountOptions fsopt;
         fsopt.root = std::make_shared<OSService>(data_dir.getValue());
-        // 加锁，直至运行结束，别的进程不能对data_dir目录进行操作了哦
-        // 
+        // 加锁，直至运行结束，别的线程不能对data_dir目录进行操作
         fsopt.root->lock();
         fsopt.block_size = config.block_size;
         fsopt.iv_size = config.iv_size;

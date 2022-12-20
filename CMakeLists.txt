@@ -1,4 +1,4 @@
-# 设置cmake的最低版本要求
+ # 设置cmake的最低版本要求
 cmake_minimum_required(VERSION 3.0 FATAL_ERROR)
 # 制定c++的编译器版本为c++11
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -127,6 +127,9 @@ FileBase::FileBase(std::shared_ptr<FileStream> data_stream,
     warn_if_key_not_random(key_, __FILE__, __LINE__);
     key_type data_key, meta_key;
     byte generated_keys[KEY_LENGTH * 4] = {};
+    // 利用master_key来生成generated_keys
+    // max_padding_size > 0时，generated_keys长度为4 * KEY_LENGTH
+    // max_padding_size = 0时，generated_keys长度为3 * KEY_LENGTH
     hkdf(key_.data(),
          key_.size(),
          nullptr,
@@ -135,8 +138,12 @@ FileBase::FileBase(std::shared_ptr<FileStream> data_stream,
          id_.size(),
          generated_keys,
          max_padding_size > 0 ? 4 * KEY_LENGTH : 3 * KEY_LENGTH);
+    // data_key为generated_keys[0:KEY_LENGTH]
     memcpy(data_key.data(), generated_keys, KEY_LENGTH);
+    // meta_key为generated_keys[KEY_LENGTH:2*KEY_LENGTH]
     memcpy(meta_key.data(), generated_keys + KEY_LENGTH, KEY_LENGTH);
+    // std::pair<std::shared_ptr<CryptStream>, std::shared_ptr<HeaderBase>>
+    // 实际都是internal::AESGCMCryptStream类
     auto crypt = make_cryptstream_aes_gcm(std::static_pointer_cast<StreamBase>(data_stream),
                                           std::static_pointer_cast<StreamBase>(meta_stream),
                                           data_key,
@@ -210,10 +217,13 @@ void FileBase::read_header()
 
 int FileBase::get_real_type() { return type_for_mode(get_mode() & S_IFMT); }
 
+// FileBase的stat函数
 void FileBase::stat(struct fuse_stat* st)
 {
+    // 调用系统调用::fstat，获取密文文件的stat
     m_data_stream->fstat(st);
 
+    // 将flags[]中的数据赋值给st
     st->st_uid = get_uid();
     st->st_gid = get_gid();
     st->st_nlink = get_nlink();
@@ -224,6 +234,7 @@ void FileBase::stat(struct fuse_stat* st)
     {
         st->st_blksize = static_cast<decltype(st->st_blksize)>(blk_sz);
     }
+    // 如果开启了存储时间戳功能，将flags[]中的数据赋值给st
     if (m_store_time)
     {
 #ifdef __APPLE__
@@ -244,14 +255,19 @@ void FileBase::stat(struct fuse_stat* st)
 
 FileBase::~FileBase() {}
 
+// 将内存RAM中的数据write到对应的文件中（因为full format中利用了RAM来缓存，实现类似cpu cache的功能）
+// 可能还在内存脏页中，os会在合适的时候写入到磁盘中
 void FileBase::flush()
 {
+    // SimpleDirectory::subflush()定义了该虚函数
     this->subflush();
     if (m_dirty)
     {
         size_t header_size = m_store_time ? EXTENDED_HEADER_SIZE : HEADER_SIZE;
         auto header = make_unique_array<byte>(header_size);
         memset(header.get(), 0, header_size);
+        // 为什么要把header里面存的属性都转换为小端存储的方式？？？
+        // 在本机下测试，默认用的是小端存储
         for (size_t i = 0; i < NUM_FLAGS; ++i)
         {
             to_little_endian<uint32_t>(m_flags[i], &header[i * sizeof(uint32_t)]);
@@ -324,8 +340,10 @@ ssize_t FileBase::getxattr(const char* name, char* value, size_t size)
     return true_size;
 }
 
+// 改变文件的访问和修改时间（纳秒级）
 void FileBase::utimens(const struct fuse_timespec* ts)
 {
+    // 如果开启了存储时间戳功能，则设置m_flags对应value
     if (m_store_time)
     {
         struct fuse_timespec current_time;
@@ -343,6 +361,7 @@ void FileBase::utimens(const struct fuse_timespec* ts)
 
         set_ctime(current_time);
     }
+    // 没开启则调用系统调用
     else
     {
         m_data_stream->utimens(ts);
@@ -440,6 +459,7 @@ bool SimpleDirectory::remove_entry_impl(const std::string& name, id_type& id, in
     return true;
 }
 
+// 
 void SimpleDirectory::subflush()
 {
     if (m_dirty)

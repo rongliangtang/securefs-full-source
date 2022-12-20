@@ -41,6 +41,7 @@ namespace internal
     class HMACStream final : public StreamBase
     {
     private:
+        //  m_key未发生作用啊？？？
         key_type m_key;
         id_type m_id;
         std::shared_ptr<StreamBase> m_stream;
@@ -158,17 +159,19 @@ std::shared_ptr<StreamBase> make_stream_hmac(const key_type& key_,
     return std::make_shared<internal::HMACStream>(key_, id_, std::move(stream), check);
 }
 
-// 读取对应块号的block到output中
+// full format中会用到
+// 读取对应块号的block密文并解密到output中
 length_type CryptStream::read_block(offset_type block_number, void* output)
 {
-    // 调用哪里的？？？？
     // m_stream是StreamBase类的shared_ptr
-    // 读取后的output是密文（仅仅密文，不包括IV和mac等）
-    // 
+    // 读取后的output是密文
+    // 调用unixFileStream类中的read()函数
     auto rc = m_stream->read(output, block_number * m_block_size, m_block_size);
     if (rc == 0)
         return 0;
     // 进行密文数据的解密，根据block_number找到底层的IV和mac来进行解密
+    // 调用streams.cpp中的AESGCMCryptStream类中的方法
+    // 注意liteformat中调用的是lite_stream.h中的AESGCMCryptStream
     decrypt(block_number, output, output, rc);
     return rc;
 }
@@ -185,11 +188,15 @@ length_type BlockBasedStream::read_block(offset_type block_number,
     assert(begin <= m_block_size && end <= m_block_size);
 
     // 当begin和end刚好为1个block时，直接读取这个块就行，调用对应函数
+    // lite format
     /* 
     因为m_crypt_stream为AESGCMCryptStream类型（故以后调用同名同参都是优先调用该类型中的）；m_crypt_stream->read通过继承调用BlockBasedStream中的read（因为AESGCMCryptStream类型中无read实现）；
     因为参数原因read调用BlockBasedStream中的read_block（本类找没有四个参的read_block，再找BlockBasedStream）；read_block调用AESGCMCryptStream中的read_block（虽然有同名，但是优先调用AESGCMCryptStream类型中的）
     */
     // read_block调用AESGCMCryptStream中的read_block（虽然有同名，但是优先调用AESGCMCryptStream类型中的）
+    
+    // full format
+    // 调用CryptStream类的read_block()函数
     if (begin == 0 && end == m_block_size)
         return read_block(block_number, output);
 
@@ -264,6 +271,8 @@ length_type BlockBasedStream::read(void* output, offset_type offset, length_type
         // 按块读
         // read_block(块号, 输出, 读起点, 读终点);
         // 这里调用的read_block()是BlockBasedStream中的，因为AESGCMCrypyStream中没有实现四个参数的read_block()，所以顺着继承关系往上找
+        // lite format用的是lite_stream.h中的AESGCMStream类
+        // full format同上，用到是Stream.cpp中的AESGCMStream类
         auto rc = read_block(block_num, output, begin, end);
         // total为当前读取到的总字节数
         total += rc;
@@ -394,6 +403,7 @@ void BlockBasedStream::unchecked_resize(length_type current_size, length_type ne
 
 namespace internal
 {
+    // lite中也有一个AESGCMCryptStream类
     class AESGCMCryptStream final : public CryptStream, public HeaderBase
     {
     public:
@@ -635,6 +645,7 @@ make_cryptstream_aes_gcm(std::shared_ptr<StreamBase> data_stream,
                          unsigned iv_size,
                          unsigned header_size)
 {
+    // 返回的是多态，实际为internal::AESGCMCryptStream类
     auto stream = std::make_shared<internal::AESGCMCryptStream>(std::move(data_stream),
                                                                 std::move(meta_stream),
                                                                 data_key,

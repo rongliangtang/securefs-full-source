@@ -27,7 +27,10 @@ public:
     FileTable() {}
     virtual ~FileTable();
 
+    // 打开一个文件，返回基类对象
     virtual FileBase* open_as(const id_type& id, int type) = 0;
+    // 纯虚函数
+    // 创建文件，返回基类对象
     virtual FileBase* create_as(const id_type& id, int type) = 0;
     virtual void close(FileBase*) = 0;
     virtual bool is_readonly() const noexcept = 0;
@@ -37,22 +40,40 @@ public:
     virtual bool has_padding() const noexcept = 0;
 };
 
+// 文件表实现类，继承FileTable
+// 实现了一个文件表，缓存了密文文件中打开文件和关闭文件的记录，用来加速访问密文文件，避免频繁从磁盘读密文文件
 class FileTableImpl final : public FileTable
 {
 private:
+    // 定义类型别名，table_type类型实际为一个unordered_map容器
+    // id_hash函数对象取出id的后sizeof(size_t)字节内容，作为hash值返回
+    // 每个FileBase类型的unique_ptr表示一个文件
     typedef std::unordered_map<id_type, std::unique_ptr<FileBase>, id_hash> table_type;
 
 private:
+    // MAX_NUM_CLOSED为m_files缓存表中的最大已关闭文件记录容量
+    // NUM_EJECT为每次从m_files缓存表中删除的已关闭文件最大数量
     static const int MAX_NUM_CLOSED = 101, NUM_EJECT = 8;
 
 private:
+    // c++互斥锁
     securefs::Mutex m_lock;
+    // master_key
     key_type m_master_key;
+    // files缓存，是一个unordered_map，里面存放了每个文件的<id,FileBase>
+    // 存放<id,FileBase>在内存中，用来加速获取访问，包括打开文件缓存和最近关闭文件缓存
     table_type m_files THREAD_ANNOTATION_GUARDED_BY(m_lock);
+    // 已关闭文件的id
+    //（后面对m_files缓存表进行清理的时候，从已关闭文件id中找记录出来清理，道理很简单，如果没有关闭还在用，怎么能从缓存中清理呢）
     std::vector<id_type> m_closed_ids THREAD_ANNOTATION_GUARDED_BY(m_lock);
+    // FileTableIO在file_table.cpp中定义
+    // 作用是根据id来打开、创建、删除加密文件（数据文件和元文件）
     std::unique_ptr<FileTableIO> m_fio THREAD_ANNOTATION_GUARDED_BY(m_lock);
+    // flags是命令设置的一些有关参数kOptionStoreTime、kOptionReadOnly等
     uint32_t m_flags;
+    // block_size, iv_size, size
     unsigned m_block_size, m_iv_size, m_max_padding_size;
+    // OSService类型的shared_ptr，里面存了加密数据根目录的文件描述符
     std::shared_ptr<const OSService> m_root;
 
 private:
@@ -72,21 +93,31 @@ public:
     FileBase* open_as(const id_type& id, int type) override;
     FileBase* create_as(const id_type& id, int type) override;
     void close(FileBase*) override;
+    // 返回命令是否设置只读
     bool is_readonly() const noexcept override { return (m_flags & kOptionReadOnly) != 0; }
+    // 返回命令是否设置不需要认证
     bool is_auth_enabled() const noexcept override
     {
         return (m_flags & kOptionNoAuthentication) == 0;
     }
+    // 返回命令是否设置存储时间戳
     bool is_time_stored() const noexcept override { return (m_flags & kOptionStoreTime) != 0; }
+    // 调用密文根目录的statfs函数
     void statfs(struct fuse_statvfs* fs_info) override { m_root->statfs(fs_info); }
+    // 返回命令是否开启padding功能
     bool has_padding() const noexcept override { return m_max_padding_size > 0; }
 };
 
+// 公共文件表实现类，继承FileTable
+// 定义了一个FileTableImpl数组，利用id与FileTableImpl建立对应关系，用多个FileTableImpl来实现密文文件的操作
+// 为什么要用多个FileTableImpl来实现密文文件的操作？？？防止一个占用内存过大吗？
 class ShardedFileTableImpl final : public FileTable
 {
 private:
+    // m_shards为FileTableImpl对象vector，多个FileTableImpl来实现密文文件的操作
     std::vector<std::unique_ptr<FileTableImpl>> m_shards;
 
+    // 返回一个FileTableImpl类指针，根据id从m_shards数组中取出对象
     FileTableImpl* get_shard_by_id(const id_type& id) noexcept;
 
 public:
@@ -102,6 +133,7 @@ public:
     FileBase* open_as(const id_type& id, int type) override;
     FileBase* create_as(const id_type& id, int type) override;
     void close(FileBase* fb) override;
+    // 调用m_shards中最后一个FileTableImpl对象的方法，因为这些方法与对象无关，调用谁都一样
     bool is_readonly() const noexcept override { return m_shards.back()->is_readonly(); }
     bool is_auth_enabled() const noexcept override { return m_shards.back()->is_auth_enabled(); }
     bool is_time_stored() const noexcept override { return m_shards.back()->is_time_stored(); }
@@ -109,6 +141,8 @@ public:
     bool has_padding() const noexcept override { return m_shards.back()->has_padding(); }
 };
 
+// AutoClosedFileBase类
+// 建立文件表和文件流的对应关系，实现访问文件流属性的方法
 class AutoClosedFileBase
 {
 private:
@@ -160,6 +194,7 @@ public:
         m_fb = nullptr;
         return rt;
     }
+    // 让m_fb指向fb，关闭fb对应的FileTableImpl文件表
     void reset(FileBase* fb)
     {
         if (m_ft && m_fb)

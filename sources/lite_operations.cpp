@@ -163,6 +163,7 @@ namespace lite
         // 将fuse_get_context()->private_data转为MountOptions*，即BundledContext
         auto ctx = new BundledContext;
         ctx->opt = static_cast<operations::MountOptions*>(args);
+        // 返回值会放到private_data中
         return ctx;
     }
 
@@ -195,7 +196,7 @@ namespace lite
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {buf}});
     }
 
-    // 获得加密文件的属性：通过执行FileSystem对象中的stat()来实现
+    // 获得未打开文件的属性：通过执行FileSystem对象中的stat()来实现
     // 输入的path是明文路径，将path对应的加密文件的属性存到st中
     int getattr(const char* path, struct fuse_stat* st)
     {
@@ -211,7 +212,7 @@ namespace lite
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {st}});
     }
 
-    // 获得打开的文件的属性
+    // 获得已打开文件的属性
     int fgetattr(const char* path, struct fuse_stat* st, struct fuse_file_info* info)
     {
         auto func = [=]()
@@ -351,6 +352,7 @@ namespace lite
             AutoClosedFile file = filesystem->open(path, info->flags, 0644);
             // 将打开文件获得的对象转为句柄存在info中，后面的操作再通过info中的句柄来取得对象，很nice的操作！
             set_file_handle(info, file.release());
+
             return 0;
         };
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {info}});
@@ -374,7 +376,7 @@ namespace lite
     read(const char* path, char* buf, size_t size, fuse_off_t offset, struct fuse_file_info* info)
     {
         auto func = [=]()
-        {
+        {   
             // 获得File对象（info->fh转Base*转File*）
             // 之前在open()中获得对象后，再转为文件句柄存在info中，这里将句柄再转回对象
             // 注意fp这个File对象指针里面存放很多有效信息！
@@ -433,7 +435,7 @@ namespace lite
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {info}});
     }
 
-    // 改变（截断）打开文件的大小为len，通过调用File对象中的resize()实现
+    // 改变（截断）已打开文件的大小为len，通过调用File对象中的resize()实现
     int ftruncate(const char* path, fuse_off_t len, struct fuse_file_info* info)
     {
         auto func = [=]()

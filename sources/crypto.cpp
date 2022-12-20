@@ -150,6 +150,9 @@ bool AES_SIV::decrypt_and_verify(const void* ciphertext,
     return CryptoPP::VerifyBufsEqual(static_cast<const byte*>(siv), temp_iv, AES_SIV::IV_SIZE);
 }
 
+// 随机生成size byte的随机数
+// 不会重复生成？待深入点了解随机生成的原理
+// https://www.cryptopp.com/wiki/RandomNumberGenerator
 void generate_random(void* buffer, size_t size)
 {
     static thread_local CryptoPP::AutoSeededRandomPool rng;
@@ -224,6 +227,7 @@ static void hkdf_expand(const void* distilled_key,
     }
 }
 
+// 密钥衍生函数（利用hmac_sha256实现）
 void hkdf(const void* key,
           size_t key_len,
           const void* salt,
@@ -233,6 +237,7 @@ void hkdf(const void* key,
           void* output,
           size_t out_len)
 {
+    // 有salt
     if (salt && salt_len)
     {
         byte distilled_key[32];
@@ -240,6 +245,7 @@ void hkdf(const void* key,
             key, key_len, salt, salt_len, distilled_key, array_length(distilled_key));
         hkdf_expand(distilled_key, array_length(distilled_key), info, info_len, output, out_len);
     }
+    // 没有salt
     else
     {
         hkdf_expand(key, key_len, info, info_len, output, out_len);

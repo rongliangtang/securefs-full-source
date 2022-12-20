@@ -148,6 +148,7 @@ public:
     // 调整文件的大小，通过调用linux内核提供的库函数ftruncate()实现
     void resize(length_type new_length) override
     {
+        // new_length更长的话，会用0填充
         auto rc = ::ftruncate(m_fd, new_length);
         if (rc < 0)
             THROW_POSIX_EXCEPTION(errno, "truncate");

@@ -175,39 +175,54 @@ typename _Unique_if<T>::_Unknown_bound make_unique(size_t n)
 template <class T, class... Args>
 typename _Unique_if<T>::_Known_bound make_unique(Args&&...) = delete;
 
-// POD数据类型数组，这个写法有点牛皮
-// POD数据类型与用于 C 程序语言的类型兼容，即它能直接以二进制形式与 C 库交互。
+// POD数据类型指的是能与C程序语言的类型兼容，即它能直接以二进制形式与C库交互。
+// 编写这个类的主要原因，是要用到c中的内存管理函数，来实现拷贝构造、等号重载、判断数组是否相等（内容一样则相等）
+// https://zh.cppreference.com/w/cpp/named_req/PODType
+// 常见的POD数据类型有int、float、char等算数类型
 template <class T, size_t Size>
 class PODArray
 {
 private:
     T m_data[Size];
     // static_assert(a,b) 编译的时候检查a的真值，报错b
+    // 判断模版类T是不是POD类型
     static_assert(std::is_pod<T>::value, "Only POD types are supported");
 
 public:
+    // 构造函数：将数组用0填满
     explicit PODArray() noexcept { memset(m_data, 0, sizeof(m_data)); }
+    // 带参构造函数：将数组用value填满
     explicit PODArray(const T& value) noexcept
     {
         std::fill(std::begin(m_data), std::end(m_data), value);
     }
+    // 拷贝构造函数
     PODArray(const PODArray& other) noexcept { memcpy(m_data, other.m_data, size()); }
+    // 等号运算符重载：通过复制数组内容实现
     PODArray& operator=(const PODArray& other) noexcept
     {
+        // memmove将other.m_data中size()大小的数据复制到m_data中，好处是在内存重叠的时候也能保证正确
         memmove(m_data, other.m_data, size());
         return *this;
     }
+    // 返回数组首地址
     const T* data() const noexcept { return m_data; }
+    // 返回数组首地址
     T* data() noexcept { return m_data; }
     static constexpr size_t size() noexcept { return Size; };
+    // 恒等运算符重载：通过判断数组内容是否相同
     bool operator==(const PODArray& other) const noexcept
     {
         return memcmp(m_data, other.m_data, size()) == 0;
     }
+    // 不等于运算符重载
     bool operator!=(const PODArray& other) const noexcept { return !(*this == other); }
+    // 析构函数：将数组内容置0
     ~PODArray() { CryptoPP::SecureWipeArray(m_data, Size); }
 };
 
+// byte为unsigned char
+// KEY_LENGTH = 32, ID_LENGTH = 32
 typedef PODArray<byte, KEY_LENGTH> key_type;
 typedef PODArray<byte, ID_LENGTH> id_type;
 
@@ -231,10 +246,12 @@ inline bool is_all_zeros(const void* data, size_t len)
     return is_all_equal(bytes, bytes + len, 0);
 }
 
-// 转换为小端存储（低位字节放在低地址端）？？有啥用
+// 转换为小端存储（低位字节放在低地址端）
 template <class T>
 inline void to_little_endian(T value, void* output) noexcept
 {
+    // std::remove_reference<T>::type去除引用，
+    // https://blog.csdn.net/kenfan1647/article/details/113744417
     typedef typename std::remove_reference<T>::type underlying_type;
     static_assert(std::is_unsigned<underlying_type>::value, "Must be an unsigned integer type");
     auto bytes = static_cast<byte*>(output);
@@ -244,7 +261,8 @@ inline void to_little_endian(T value, void* output) noexcept
     }
 }
 
-// 将小端存储的数据转换为value返回？？
+// 模版函数
+// 将小端存储的数据转换为T类型的value返回
 template <class T>
 inline typename std::remove_reference<T>::type from_little_endian(const void* input) noexcept
 {
@@ -259,7 +277,8 @@ inline typename std::remove_reference<T>::type from_little_endian(const void* in
     return value;
 }
 
-// ？？将id的最后sizeof(size_t)的数据复制到value，并返回value
+// id_hash是FileTableImpl类中定义unordered_map用的
+// 取出id的后sizeof(size_t)字节内容，作为hash值返回
 struct id_hash
 {
     size_t operator()(const id_type& id) const noexcept

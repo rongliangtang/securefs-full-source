@@ -29,7 +29,7 @@ std::string OSService::temp_name(StringRef prefix, StringRef suffix)
 
 // 创建一个文件夹，失败会抛出异常
 // 这个函数就是来实现unix和windows两个平台的通用功能
-// 实现关系：ensure_directory <- mkdir <- unix:mkdir or win:mkdir
+// 实现关系：OSService::ensure_directory -> unix.cpp或win.cpp中OSService::mkdir
 void OSService::ensure_directory(StringRef path, unsigned mode) const
 {
     try
@@ -45,6 +45,7 @@ void OSService::ensure_directory(StringRef path, unsigned mode) const
     }
 }
 
+// 不抛出异常的删除文件，根据系统来调用OSService::remove_file(StringRef path)实现
 bool OSService::remove_file_nothrow(StringRef path) const noexcept
 {
     try

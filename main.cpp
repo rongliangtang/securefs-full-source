@@ -23,7 +23,8 @@ int wmain(int argc, wchar_t** wargv)
 
 #else
 // 不是windows系统时
-int main(int argc, char** argv) { 
-return securefs::commands_main(argc, argv); 
+int main(int argc, char** argv) {
+
+    return securefs::commands_main(argc, argv);
 }
 #endif

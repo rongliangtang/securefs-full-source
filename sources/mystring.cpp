@@ -207,6 +207,7 @@ std::vector<std::string> split(StringRef str_, char separator)
     return result;
 }
 
+// 将data的前length个byte转化为16进制表示，故需要2*lenth长度来存放
 std::string hexify(const byte* data, size_t length)
 {
     const char* table = "0123456789abcdef";

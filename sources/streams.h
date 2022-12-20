@@ -133,9 +133,11 @@ public:
  * The CryptStream supports sparse streams if the subclass can tell whether all zero block
  * are ciphertext or sparse parts of the underlying stream.
  */
+// full format用到的加密解密类，lite format用的是AESGCMCryptStream类
 class CryptStream : public BlockBasedStream
 {
 protected:
+    // 文件流，FileStream继承StreamBase的
     std::shared_ptr<StreamBase> m_stream;
 
     // Both encrypt/decrypt should not change the length of the block.
@@ -155,6 +157,7 @@ private:
     void write_block(offset_type block_number, const void* input, length_type length) override;
 
 public:
+    // 构造函数
     explicit CryptStream(std::shared_ptr<StreamBase> stream, length_type block_size)
         : BlockBasedStream(block_size), m_stream(std::move(stream))
     {

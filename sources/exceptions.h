@@ -9,8 +9,14 @@
 #include <string>
 #include <utility>
 
+/*
+自定义异常，通过继承std::exception实现
+*/
+
+
 namespace securefs
 {
+// 异常基类，继承std::exception
 class ExceptionBase : public std::exception
 {
 private:
@@ -28,12 +34,13 @@ public:
     const char* what() const noexcept override;
 };
 
+// 不可达到代码异常，继承ExceptionBase
 class UnreachableCodeException final : public ExceptionBase
 {
 private:
-    const char* m_func;
-    const char* m_file;
-    int m_line;
+    const char* m_func; // 函数名
+    const char* m_file; // 文件名
+    int m_line; // 行号
 
 public:
     explicit UnreachableCodeException(const char* func, const char* file, int line)
@@ -48,12 +55,14 @@ public:
     }
 };
 
+// 宏定义UNREACHABLE()，调用该宏的时候，会构造相应的UnreachableCodeException对象
 #define UNREACHABLE() throw securefs::UnreachableCodeException(__FUNCTION__, __FILE__, __LINE__)
 
+// VFS异常，继承ExceptionBase
 class VFSException final : public ExceptionBase
 {
 private:
-    int m_errno;
+    int m_errno;    // 错误码
 
 public:
     explicit VFSException(int errc) : m_errno(errc) {}
@@ -64,12 +73,15 @@ public:
     std::string message() const override;
 };
 
+// [[noreturn]]关键字表示当前函数不会返回，即在当前函数调用之后的函数或代码并不会被执行
 [[noreturn]] void throwVFSException(int errc);
 
+// 系统异常，继承ExceptionBase
 class SystemException : public ExceptionBase
 {
 };
 
+// POSIX异常，继承ExceptionBase
 class POSIXException final : public SystemException
 {
 private:
@@ -85,6 +97,7 @@ public:
     std::string message() const override;
 };
 
+// THROW_POSIX_EXCEPTION宏定义
 // This macro is needed because errno expands to a function, which has unspecified evaluation order
 // with respect to other function calls, and those other function calls may modify errno, resulting
 // in incorrect error reporting
@@ -97,14 +110,17 @@ public:
 
 [[noreturn]] void throwPOSIXExceptionDoNotUseDirectly(int err, std::string msg);
 
+// 验证异常，继承ExceptionBase
 class VerificationException : public ExceptionBase
 {
 };
 
+// 非法格式异常，继承ExceptionBase
 class InvalidFormatException : public ExceptionBase
 {
 };
 
+// 非法参数异常，继承ExceptionBase
 class InvalidArgumentException : public ExceptionBase
 {
 private:
@@ -119,9 +135,11 @@ public:
     int error_number() const noexcept override { return EINVAL; }
 };
 
+// noreturn的抛出异常函数
 [[noreturn]] void throwInvalidArgumentException(const char* why);
 [[noreturn]] void throwInvalidArgumentException(std::string why);
 
+// 元数据损坏异常，继承ExceptionBase
 class CorruptedMetaDataException : public InvalidFormatException
 {
 private:
@@ -142,6 +160,7 @@ public:
     }
 };
 
+// 消息验证异常，继承ExceptionBase
 class MessageVerificationException : public VerificationException
 {
 private:
@@ -162,6 +181,7 @@ public:
     }
 };
 
+// xattr验证异常，继承ExceptionBase
 class XattrVerificationException : public VerificationException
 {
 private:
@@ -183,12 +203,14 @@ public:
     }
 };
 
+// lite消息验证异常，继承ExceptionBase
 class LiteMessageVerificationException : public VerificationException
 {
 public:
     std::string message() const override { return "File content has invalid checksum"; }
 };
 
+// 流太长异常，继承ExceptionBase
 class StreamTooLongException : public ExceptionBase
 {
 private:
@@ -210,6 +232,7 @@ public:
     int error_number() const noexcept override { return EFBIG; }
 };
 
+// 非法转换异常，继承ExceptionBase
 class InvalidCastException final : public ExceptionBase
 {
 private:
@@ -228,6 +251,7 @@ public:
     }
 };
 
+// 文件类型不一致异常异常，继承ExceptionBase
 class FileTypeInconsistencyException : public ExceptionBase
 {
 public:
@@ -238,6 +262,7 @@ public:
     }
 };
 
+// noreturn的一些抛出异常函数
 [[noreturn]] void throwFileTypeInconsistencyException();
 
 [[noreturn]] void throw_runtime_error(const char*);

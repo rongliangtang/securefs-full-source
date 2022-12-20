@@ -2,17 +2,21 @@
 #include "logger.h"
 #include "platform.h"
 
+// ExceptionBase类的构造和析构都用默认
 securefs::ExceptionBase::ExceptionBase() = default;
 
 securefs::ExceptionBase::~ExceptionBase() = default;
 
+// 抛出VFSException
 void ::securefs::throwVFSException(int errc) { throw VFSException(errc); }
 
+// 抛出InvalidArgumentException
 void ::securefs::throwInvalidArgumentException(const char* why)
 {
     throw InvalidArgumentException(why);
 }
 
+// 抛出InvalidArgumentException
 void ::securefs::throwInvalidArgumentException(std::string why)
 {
     throw InvalidArgumentException(std::move(why));
@@ -24,6 +28,7 @@ securefs::POSIXException::~POSIXException() = default;
 
 securefs::InvalidArgumentException::~InvalidArgumentException() = default;
 
+// [[noreturn]]关键字只对其作用的函数或类有效
 [[noreturn]] void securefs::throwFileTypeInconsistencyException()
 {
     throw ::securefs::FileTypeInconsistencyException();
