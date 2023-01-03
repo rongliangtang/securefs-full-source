@@ -533,10 +533,14 @@ int OSService::removexattr(const char* path, const char* name) const noexcept
 void OSService::read_password_no_confirmation(const char* prompt,
                                               CryptoPP::AlignedSecByteBlock* output)
 {
+    // byte为unsigned char
     byte buffer[4000];
+    // 放在DEFER宏中的函数会在出作用域的时候执行，通过ScopeGuard实现。
     DEFER(CryptoPP::SecureWipeBuffer(buffer, array_length(buffer)));
+    // 表示当前buffer中position，即放了多少个字符了
     size_t bufsize = 0;
 
+    // https://blog.csdn.net/wumenglu1018/article/details/53098794
     struct termios old_tios, new_tios;
     if (::isatty(STDIN_FILENO))
     {
@@ -551,6 +555,7 @@ void OSService::read_password_no_confirmation(const char* prompt,
         new_tios.c_lflag &= ~(unsigned)ECHO;
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &new_tios);
     }
+    // 循环从缓冲区获取用户的输入直至\r、\n或EOF
     while (1)
     {
         int c = getchar();
@@ -563,14 +568,18 @@ void OSService::read_password_no_confirmation(const char* prompt,
         }
         else
         {
+            // 如果密码超过4000个字符，抛出错误
             throw_runtime_error("Password exceeds 4000 characters");
         }
     }
+
     if (::isatty(STDIN_FILENO))
     {
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &old_tios);
         putc('\n', stderr);
     }
+
+    // 把输入的密码放到output->data()中
     output->resize(bufsize);
     memcpy(output->data(), buffer, bufsize);
 }
@@ -589,18 +598,20 @@ void OSService::get_current_time_in_tm(struct tm* tm, int* nanoseconds)
 void OSService::read_password_with_confirmation(const char* prompt,
                                                 CryptoPP::AlignedSecByteBlock* output)
 {
-    // 第一次输入，读取密码到output中
+    // 第一次输入，读取密码到output->data()中
     read_password_no_confirmation(prompt, output);
+
     // 若不是键盘输入，则结束函数
     // STDIN_FILENO表示标准输入（键盘输入），若为标准输入，则::isatty(STDIN_FILENO)返回1
     if (!::isatty(STDIN_FILENO) || !::isatty(STDERR_FILENO))
     {
         return;
     }
+
     // 第二次输入，读取密码到another中
     CryptoPP::AlignedSecByteBlock another;
     read_password_no_confirmation("Again: ", &another);
-    // 判断两次输入密码的尺寸和数据是否一样
+    // 判断两次输入密码的尺寸和数据是否一样，不一样则抛出异常
     if (output->size() != another.size()
         || memcmp(output->data(), another.data(), another.size()) != 0)
         throw_runtime_error("Password mismatch");

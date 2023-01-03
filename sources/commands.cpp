@@ -45,6 +45,7 @@ namespace
 const char* const CONFIG_FILE_NAME = ".securefs.json";
 const unsigned MIN_ITERATIONS = 20000;
 const unsigned MIN_DERIVE_SECONDS = 1;
+// size_t（size_type）可以提高代码的可移植性、有效性、可读性，表示取值范围是目标平台下最大的可能范围。不同位数的os上定义不一样，但都为无符号整数。
 const size_t CONFIG_IV_LENGTH = 32, CONFIG_MAC_LENGTH = 16;
 
 const char* const PBKDF_ALGO_PKCS5 = "pkcs5-pbkdf2-hmac-sha256";
@@ -736,15 +737,14 @@ protected:
     // require_confirmation表示是否需要二次验证（验证两次输入的密码是否一致）
     void get_password(bool require_confirmation)
     {
-        // 如果在命令中设置了pass参数且不为空，则将其放入到password这个secblock中
-        // 光放进去了吗？什么时候验证
+        // 如果在命令中设置了pass参数且不为空，则将其放入到password这个CryptoPP::AlignedSecByteBlock中，以便后面用cryptopp进行处理
         if (pass.isSet() && !pass.getValue().empty())
         {
             // 将命令行输入的pass存到password这个secblock中
             // reinterpret_cast<const byte*>(xx)将xx强制转换为const char*类型
             password.Assign(reinterpret_cast<const byte*>(pass.getValue().data()),
                             pass.getValue().size());
-            // SecureWipeBuffer将数组置0或擦除？？目的是什么？
+            // SecureWipeBuffer将pass字符数组擦除置0，因为它后面不用了，所以需要擦除置0，防止从内存中获取密码，这样比较安全
             CryptoPP::SecureWipeBuffer(reinterpret_cast<byte*>(&pass.getValue()[0]),
                                        pass.getValue().size());
             // 退出函数
@@ -762,13 +762,15 @@ protected:
         // 若require_confirmation为true，则需要输入两次密码，验证两次输入是否一致（用在create时）
         if (require_confirmation)
         {
+            // 执行输入两次密码的函数，结果放到password中
             return OSService::read_password_with_confirmation("Enter password:", &password);
         }
         // 若require_confirmation为false，则输入一次密码
+        // 执行输入一次密码的函数，结果放到password中
         return OSService::read_password_no_confirmation("Enter password:", &password);
     }
 
-    // 添加来自基类的待解析参数
+    // 添加来自基类（singlepassword及其子类）的待解析参数
     void add_all_args_from_base(TCLAP::CmdLine& cmd_line)
     {
         cmd_line.add(&data_dir);
@@ -797,13 +799,13 @@ private:
         false,
         0,
         "integer"};
-    // format表示文件系统的格式版本
+    // format表示securefs文件系统的格式版本
     TCLAP::ValueArg<unsigned int> format{
         "", "format", "The filesystem format version (1,2,3,4)", false, 4, "integer"};
-    // IV size的作用是AES-GCM算法的IV大小？？默认为12；但是format为1的时候iv_size不可以设置，强制设为32
+    // IV size的作用是加密block用到的iv sieze。默认为12；但是format为1的时候iv_size不可以设置，强制设为32
     TCLAP::ValueArg<unsigned int> iv_size{
         "", "iv-size", "The IV size (ignored for fs format 1)", false, 12, "integer"};
-    // block_size的作用是file对应每个block大小？？默认为4096；但是format为1的时候block_size不可以设置，强制设为4096
+    // block_size的作用是file对应每个block有效内容的大小。默认为4096；但是format为1的时候block_size不可以设置，强制设为4096
     TCLAP::ValueArg<unsigned int> block_size{
         "", "block-size", "Block size for files (ignored for fs format 1)", false, 4096, "integer"};
     // store_time表示是否存储和加密时间戳，format=3时默认开启了这个功能
@@ -815,7 +817,7 @@ private:
     // pbkdf表示使用何种pbkdf算法，默认是argon2id
     TCLAP::ValueArg<std::string> pbkdf{
         "", "pbkdf", message_for_setting_pbkdf, false, PBKDF_ALGO_ARGON2ID, "string"};
-    // max-padding表示填充到所有文件的最大数量，作用是混淆文件的大小，开启这个功能会产生巨大的性能消耗
+    // max-padding表示填充到所有文件的最大数量，每个block进行随机填充，作用是混淆文件的大小，开启这个功能会产生巨大的性能消耗
     TCLAP::ValueArg<unsigned> max_padding{
         "",
         "max-padding",
@@ -829,8 +831,11 @@ public:
     // 解析命令函数
     void parse_cmdline(int argc, const char* const* argv) override
     {
+        // 创建tclap::cmdline对象，help_message()用于描述命令用途输出
         TCLAP::CmdLine cmdline(help_message());
+        // 添加来自基类（singlepassword及其子类）的待解析参数
         add_all_args_from_base(cmdline);
+        // 添加当前类需要待解析的参数
         cmdline.add(&iv_size);
         cmdline.add(&rounds);
         cmdline.add(&format);
@@ -838,8 +843,9 @@ public:
         cmdline.add(&block_size);
         cmdline.add(&pbkdf);
         cmdline.add(&max_padding);
+        // 进行解析
         cmdline.parse(argc, argv);
-        // 读取密码（用户输入），存到password这个类属性中了，因为是创建系统所以需要二次确认
+        // 读取密码（用户输入），存到password这个类属性中了，因为是创建系统所以需要二次确认，故require_confirmation=true
         get_password(true);
     }
 
@@ -1893,12 +1899,12 @@ public:
     }
 };
 
-// commands_main函数用来实现命令行操作，securefs系统的实现在不同命令中实现？
+// commands_main函数用来实现命令行操作，securefs系统的实现通过这些命令完成
 int commands_main(int argc, const char* const* argv)
 {
     try
     {
-        // 取消c++和c公用缓冲区写读流同步，可以加快读取文件的速度
+        // 取消c++和c公用缓冲区写读流同步，可以加快c++中cin和cout的处理速度
         std::ios_base::sync_with_stdio(false);
         // unique_ptr这种类型的指针不能共享，不能传递，只能转移
         // 用到了多态，MountCommand等继承了CommandBase
@@ -1909,20 +1915,21 @@ int commands_main(int argc, const char* const* argv)
                                                make_unique<FixCommand>(),
                                                make_unique<VersionCommand>(),
                                                make_unique<InfoCommand>()};
-        // program_name为当前运行的程序路径
+        // program_name为当前运行的程序的路径
         const char* const program_name = argv[0];
 
-        // 输出命令用途
+        // 输出可用的命令命令
         // 匿名函数，[&]表示以引用形式捕获所有外部变量，也就是外部变量均可用
         auto print_usage = [&]()
         {
             // 将字符串放到标准错误流中，用于写入诊断输出。程序启动时，该流不为完全缓冲，默认向屏幕输出。
+            // 没有以正确的形式使用的时候输出这些东西，所以用stderr
             fputs("Available subcommands:\n\n", stderr);
 
-            // auto&& ：可以修改元素的值
+            // auto&& ：不创建拷贝，可以修改元素的值
             for (auto&& command : cmds)
             {
-                // 输出各条命令的usage
+                // 输出各条命令的信息到stderr
                 if (command->short_name())
                 {
                     fprintf(stderr,
@@ -1938,18 +1945,19 @@ int commands_main(int argc, const char* const* argv)
             }
             // 输出最后一条help提示
             fprintf(stderr, "\nType %s ${SUBCOMMAND} --help for details\n", program_name);
+            // main函数返回1表示程序异常退出
             return 1;
         };
 
-        // 如果程序后面没有跟参数的话，调用print_usage()就结束程序
+        // 如果程序后面没有跟参数的话，调用print_usage()输出提示信息就结束程序
         if (argc < 2)
             return print_usage();
         
-        // 把第一个参数（程序名去掉）
+        // 把第一个参数（程序路径去掉）
         argc--;
         argv++;
 
-        // 遍历unique_ptr数组，获得数组里面的每个元素（必须要带&，才能获取到，可以修改元素的值）
+        // 遍历unique_ptr数组，获得数组里面的每个元素（因为是unique_ptr，必须要带&，才能获取到引用，可以修改元素的值）
         for (std::unique_ptr<CommandBase>& command : cmds)
         {   
             // 匹配命令
@@ -1962,9 +1970,12 @@ int commands_main(int argc, const char* const* argv)
                 return command->execute();
             }
         }
+        // 执行输出可用命令的匿名函数
         return print_usage();
     }
     // 参数解析异常提示
+    // 根据不同的异常，输出不同的ERROR_LOG，并结束程序
+    // https://tclap.sourceforge.net/html/classTCLAP_1_1ArgException.html
     catch (const TCLAP::ArgException& e)
     {
         ERROR_LOG("Error parsing arguments: %s at %s\n", e.error().c_str(), e.argId().c_str());

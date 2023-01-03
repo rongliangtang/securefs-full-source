@@ -52,6 +52,7 @@ typedef unsigned char byte;
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  */
+// https://github.com/lichray/vvpkg/blob/376beef818e2dfcbda37e86e6f800a8749ed848f/include/stdex/defer.h
 
 #ifndef _STDEX_DEFER_H
 #define _STDEX_DEFER_H
@@ -59,8 +60,9 @@ typedef unsigned char byte;
 #include <cryptopp/secblock.h>
 #include <utility>
 
-// DEFER()的作用是？？？
-// 因为 defer 关键字的特性和 C++ 的类的析构函数类似？？待测试功能
+// 放在DEFER宏中的函数会在出作用域的时候执行，通过ScopeGuard实现。
+// [&] { __VA_ARGS__; }为匿名函数，[&]表示用到的任何外部变量都隐式按引用捕获。
+// 这里替换宏后，stdex::make_guard(f)模版函数是通过自动推导，推导出模版类型的。
 #define DEFER(...)                                                                                 \
     auto STDEX_NAMELNO__(_stdex_defer_, __LINE__) = stdex::make_guard([&] { __VA_ARGS__; });
 #define STDEX_NAMELNO__(name, lno) STDEX_CAT__(name, lno)
@@ -69,7 +71,11 @@ typedef unsigned char byte;
 namespace stdex
 {
 
-// https://zhuanlan.zhihu.com/p/21303431
+// ScopeGuard 就是出作用域后，自动执行某段代码。
+// ScopeGuard的作用是将传入的方法在出作用域的时候执行，也就是在析构函数中执行
+// ScopeGuard 最大的用处就是释放资源。比如分配内存，做某些操作，再释放内存。
+// 解析：https://zhuanlan.zhihu.com/p/21303431
+// 模版类
 template <typename Func>
 struct scope_guard
 {
@@ -98,10 +104,13 @@ private:
 };
 
 // 模版函数
-// std::forward<Func>(f)表示完美转发，注意区分左值和右值，简单理解右值就是常量
+// 返回一个scope_guard模版类对象
 template <typename Func>
+// &&表示右值函数参数
+// 如果有专门为右值重载的函数的时候，右值的传参会去选择专有函数（接受&&参数的那个），而不去选更通用的接受常量引用作为参数的函数。所以，&&可以更加细化右值和常量引用。
 scope_guard<Func> make_guard(Func&& f)
 {
+    // std::forward<Func>(f)表示完美转发，不改变左右值属性的转发。
     return scope_guard<Func>(std::forward<Func>(f));
 }
 }    // namespace stdex
@@ -111,6 +120,8 @@ scope_guard<Func> make_guard(Func&& f)
 namespace securefs
 {
 template <class T, size_t N>
+// 获取数组的长度
+// 使用数组的引用作为函数形参，引用传递时指明的是数组则必须指定数组的长度。
 constexpr inline size_t array_length(const T (&)[N])
 {
     return N;
