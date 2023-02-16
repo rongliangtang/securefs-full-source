@@ -55,7 +55,7 @@ std::string to_lower(const std::string& str)
     return result;
 }
 
-// 
+// 将字符表示的16进制 转换为 对应数字表示的16进制，存在byte(无符号char)里
 void parse_hex(StringRef hex, byte* output, size_t len)
 {
     if (hex.size() % 2 != 0)
@@ -63,6 +63,7 @@ void parse_hex(StringRef hex, byte* output, size_t len)
     if (hex.size() / 2 != len)
         throwInvalidArgumentException("Mismatch hex and raw length");
 
+    // 因为一个byte里面可以表示两个16进制，所以一次生成一个byte需要累加两个16进制的值
     for (size_t i = 0; i < hex.size(); i += 2, ++output)
     {
         switch (hex[i])

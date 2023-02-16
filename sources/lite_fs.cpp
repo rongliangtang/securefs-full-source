@@ -188,6 +188,8 @@ namespace lite
     // 打开文件，返回AutoClosedFile类对象，通过OSService类中的open_file_stream()实现
     AutoClosedFile FileSystem::open(StringRef path, int flags, fuse_mode_t mode)
     {
+        // flags & O_APPEND 若flag中设置了O_APPEND，则结果非0，否则为0
+        // 清楚flags中的append标志，应对fuse的bug
         if (flags & O_APPEND)
         {
             flags &= ~((unsigned)O_APPEND);
@@ -195,12 +197,13 @@ namespace lite
             // See https://github.com/netheril96/securefs/issues/58.
         }
 
-        // Files cannot be opened write-only because the header must be read in order to derive the
-        // session key
+        // Files cannot be opened write-only because the header must be read in order to derive the session key
+        // 如果flags是仅写，则需要改为可读可写
         if ((flags & O_ACCMODE) == O_WRONLY)
         {
             flags = (flags & ~O_ACCMODE) | O_RDWR;
         }
+        // 如果flags中设置了create，则mode加上拥有者读权限
         if ((flags & O_CREAT))
         {
             mode |= S_IRUSR;
@@ -210,7 +213,7 @@ namespace lite
         // file_stream为FileStream类型的shared_ptr，实际是UnixFileStream（有属性fd），用到了多态
         // 打开的实际为加密文件，获取加密文件的句柄存在UnixFileStream类对象中
         auto file_stream = m_root->open_file_stream(translate_path(path, false), flags, mode);
-        // 创建AutoClosedFile类（File类）的对象fp，并进行构造
+        // AutoClosedFile类为File类的unique_ptr别名
         // 注意file_stream对象为UnixFileStream类型，里面存了fd，赋值给File对象中的m_file_stream属性
         // File对象中的m_crtpt_stream属性用所有的参来构造
         AutoClosedFile fp(new File(file_stream,
@@ -227,14 +230,17 @@ namespace lite
         }
 
         // 返回AutoClosedFile类的对象fp，里面包含了文件流
+        // 实际返回的是File类的unique_ptr
         return fp;
     }
 
-    // 获取文件的信息，输入的是明文路径，通过调用OSService类的stat()实现
-    // fuse_stat
+    // 获取明文文件的信息，输入的是明文路径，通过调用OSService类的stat()实现
+    // 需要利用密文文件来获得明文文件的信息
+    // fuse_stat即stat结构体
     bool FileSystem::stat(StringRef path, struct fuse_stat* buf)
     {
-        // 获得加密文件的文件属性
+        // 获得数据目录中加密文件的文件属性
+        // 将明文文件路径转为加密文件路径
         auto enc_path = translate_path(path, false);
         if (!m_root->stat(enc_path, buf))
             return false;
@@ -413,7 +419,7 @@ namespace lite
     private:
         // 明文路径（挂载点是以自己为根目录来表示路径的）
         std::string m_path;
-        // 底层文件系统遍历对象
+        // 数据目录遍历对象
         std::unique_ptr<DirectoryTraverser>
             m_underlying_traverser THREAD_ANNOTATION_GUARDED_BY(*this);
         // name加密/解密器
@@ -542,7 +548,7 @@ namespace lite
             throwVFSException(EINVAL);
         return securefs::make_unique<LiteDirectory>(
             path.to_string(),
-            // 创建加密底层文件系统的traverser对象
+            // 创建遍历数据目录的DirectoryTraverser对象，实际为UnixDirectoryTraverser多态
             m_root->create_traverser(translate_path(path, false)),
             this->m_name_encryptor,
             m_block_size,
@@ -551,8 +557,9 @@ namespace lite
 
     Base::~Base() {}
 
-// 实现apple中的xattr功能，暂时跳过
+// 实现apple中的xattr操作
 #ifdef __APPLE__
+    // 获取扩展属性
     ssize_t
     FileSystem::getxattr(const char* path, const char* name, void* buf, size_t size) noexcept
     {
@@ -613,6 +620,9 @@ namespace lite
         }
     }
 
+    // 设置扩展属性
+    // 用AES-GCM对buf（value）进行加密
+    // name不进行加密
     int FileSystem::setxattr(
         const char* path, const char* name, void* buf, size_t size, int flags) noexcept
     {

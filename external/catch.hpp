@@ -8,6 +8,13 @@
  *  Distributed under the Boost Software License, Version 1.0. (See accompanying
  *  file LICENSE_1_0.txt or copy at http://www.boost.org/LICENSE_1_0.txt)
  */
+
+// 自动化测试库（单元测试工具）
+// https://github.com/Sasha7b9Work/S8-57M/tree/53b6e4ebf83140bcde9dda9eb35c43fe0f0bc97e/sources/ThirdParty/wxWidgets/3rdparty/catch
+// https://github.com/catchorg/Catch2
+// https://www.cnblogs.com/onduty/p/8399666.html
+// https://github.com/Sasha7b9Work/S8-57M/blob/53b6e4ebf83140bcde9dda9eb35c43fe0f0bc97e/sources/ThirdParty/wxWidgets/3rdparty/catch/docs/tutorial.md
+
 #ifndef TWOBLUECUBES_SINGLE_INCLUDE_CATCH_HPP_INCLUDED
 #define TWOBLUECUBES_SINGLE_INCLUDE_CATCH_HPP_INCLUDED
 

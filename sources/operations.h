@@ -37,6 +37,7 @@ namespace operations
         ~MountOptions();
     };
 
+    // FileSystemContext文件系统上下文包含securefs文件系统的信息（根目录OSService、用户id、flag等信息）
     // full format中的FileSystemContext和lite的FileSystem用法不一样
     // FileSystemContext在full format仅有，与lite format中的FileSystem不同，不包含fuse api重写的实现方法
     // c++中的struct可以当作类来使用，而c中不可以，c++保留这个的原因是为了让c++能编译出一起c写的代码

@@ -9,6 +9,8 @@
 #include <cryptopp/rng.h>
 #include <cryptopp/sha.h>
 
+/*这个文件放了利用cryptopp实现的一些方法*/
+
 // Some of the following codes are copied from https://github.com/arktronic/aes-siv.
 // The licence follows:
 
@@ -151,10 +153,11 @@ bool AES_SIV::decrypt_and_verify(const void* ciphertext,
 }
 
 // 随机生成size byte的随机数
-// 不会重复生成？待深入点了解随机生成的原理
+// 利用到了CryptoPP
 // https://www.cryptopp.com/wiki/RandomNumberGenerator
 void generate_random(void* buffer, size_t size)
 {
+    // thread_local关键字会在每个线程都创建一个这样的变量，不是共享
     static thread_local CryptoPP::AutoSeededRandomPool rng;
     rng.GenerateBlock(static_cast<byte*>(buffer), size);
 }

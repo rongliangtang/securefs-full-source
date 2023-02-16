@@ -39,6 +39,7 @@ namespace lite
     class THREAD_ANNOTATION_CAPABILITY("mutex") Directory : public Base, public DirectoryTraverser
     {
     private:
+        // 自己的Mutex类，再次封装是为了可以用clang线程安全分析
         securefs::Mutex m_lock;
 
     public:
@@ -160,7 +161,7 @@ namespace lite
 
     class FileSystem;
 
-    // AutoClosedFile为File类型的unique_ptr，表示？？
+    // TODO:AutoClosedFile为File类型的unique_ptr，表示自动关闭的文件，因为智能指针的原因吗
     typedef std::unique_ptr<File> AutoClosedFile;
 
     std::string encrypt_path(AES_SIV& encryptor, StringRef path);
@@ -194,7 +195,7 @@ namespace lite
         CryptoPP::GCM<CryptoPP::AES>::Encryption m_xattr_enc;
         // xattr的解密器，用AES-GCM算法
         CryptoPP::GCM<CryptoPP::AES>::Decryption m_xattr_dec;
-        // padding加密器，用AES-ECB算法，什么作用？
+        // TODO:padding加密器，用AES-ECB算法，什么作用？
         CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption m_padding_aes;
         // m_root为可以执行OSService类的shared_ptr
         std::shared_ptr<const securefs::OSService> m_root;

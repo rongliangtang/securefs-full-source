@@ -187,9 +187,10 @@ template <class T, class... Args>
 typename _Unique_if<T>::_Known_bound make_unique(Args&&...) = delete;
 
 // POD数据类型指的是能与C程序语言的类型兼容，即它能直接以二进制形式与C库交互。
-// 编写这个类的主要原因，是要用到c中的内存管理函数，来实现拷贝构造、等号重载、判断数组是否相等（内容一样则相等）
+// 编写这个类的主要原因，是要用到c中的内存管理函数，来实现数组拷贝构造、等号重载、判断数组是否相等（内容一样则相等）
 // https://zh.cppreference.com/w/cpp/named_req/PODType
 // 常见的POD数据类型有int、float、char等算数类型
+// 防止c++有些类型不是POD类型，而导致使用c中的内存管理函数出错。
 template <class T, size_t Size>
 class PODArray
 {
@@ -234,6 +235,11 @@ public:
 
 // byte为unsigned char
 // KEY_LENGTH = 32, ID_LENGTH = 32
+// PODArray为POD类型的数组类，里面存放了POD类型的数组
+// POD数据类型指的是能与C程序语言的类型兼容，即它能直接以二进制形式与C库交互。
+// 编写这个类的主要原因，是要用到c中的内存管理函数，来实现数组拷贝构造、等号重载、判断数组是否相等（内容一样则相等）。
+// 防止c++有些类型不是POD类型，而导致使用c中的内存管理函数出错。
+// https://cloud.tencent.com/developer/article/1814242
 typedef PODArray<byte, KEY_LENGTH> key_type;
 typedef PODArray<byte, ID_LENGTH> id_type;
 

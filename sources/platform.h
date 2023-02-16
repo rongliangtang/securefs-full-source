@@ -141,7 +141,8 @@ typedef std::string native_string_type;
 #ifdef WIN32
 std::wstring widen_string(StringRef str);
 std::string narrow_string(WideStringRef str);
-// [[noreturn]]指？？？
+// [[noreturn]]指该处便为调用该函数的函数的最后执行尽头了
+// https://blog.csdn.net/qq_44491831/article/details/126709740
 [[noreturn]] void throw_windows_exception(const wchar_t* func_name);
 void windows_init(void);
 #endif
@@ -161,6 +162,8 @@ private:
 public:
     static bool is_absolute(StringRef path);
     static native_string_type concat_and_norm(StringRef base_dir, StringRef path);
+    // native_string_type在unix为string，在windows为wstring
+    //  concat_and_norm()将当前相对path与m_dir_name进行拼接
     // 函数后面加const，表示这个函数不可以修改类属性
     native_string_type norm_path(StringRef path) const { return concat_and_norm(m_dir_name, path); }
 

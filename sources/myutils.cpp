@@ -88,6 +88,7 @@ std::string get_user_input_until_enter()
     return result;
 }
 
+// 根据key，执行对象的value（匿名函数）
 void respond_to_user_action(
     const std::unordered_map<std::string, std::function<void(void)>>& actionMap)
 {
@@ -110,8 +111,8 @@ void respond_to_user_action(
     }
 }
 
-// popcount这个函数的作用是？？？猜测是判断master_key是不是脆弱的（通过判断随机性来判断是否脆弱），因为是随机生成的
-// noexcept 用于描述函数不会抛出异常，一旦有异常抛出
+// popcount这个函数的作用是判断master_key是不是脆弱的（通过判断随机性来判断是否脆弱），因为是随机生成的
+// noexcept 用于描述函数不会抛出异常，编译器会进行优化，一旦有异常抛出的代码该关键字无效
 size_t popcount(const byte* data, size_t size) noexcept
 {
     static const size_t TABLE[256]

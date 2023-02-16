@@ -60,6 +60,7 @@ public:
     void lock(bool exclusive) override
     {
         // 若lock_flag为false则直接结束
+        // lock_flag默认为true，可以通过noflock程序参数设置
         // lock_flag为原子类型，读写都是原子操作，为防止不同进程在执行这里的时候出现错乱
         if (!securefs::is_lock_enabled())
         {
@@ -134,6 +135,9 @@ public:
             throwVFSException(EIO);
     }
 
+    // 顺序写文件函数，利用write系统调用
+    // pwrite系统调用是随机写
+    // 在写配置文件时用到
     void sequential_write(const void* input, length_type length) override
     {
         auto rc = ::write(m_fd, input, length);
@@ -205,7 +209,7 @@ public:
 #endif
 };
 
-// unix系统中的目录遍历类
+// unix系统中的目录遍历类（实现目录遍历功能）
 class UnixDirectoryTraverser : public DirectoryTraverser
 {
 private:
@@ -224,7 +228,7 @@ public:
     bool next(std::string* name, struct fuse_stat* st) override
     {
         errno = 0;
-        // 返回一个结构体指针，并将目录流定位到下一个条目
+        // readdir()系统调用，返回一个结构体指针，并将目录流定位到下一个条目
         // https://pubs.opengroup.org/onlinepubs/7908799/xsh/dirent.h.html
         auto entry = ::readdir(m_dir);
         if (!entry)
@@ -284,6 +288,8 @@ native_string_type OSService::concat_and_norm(StringRef base_dir, StringRef path
     return base_dir + "/" + path;
 }
 
+// 无参构造函数
+// m_dir_fd为当前工作路径文件描述符，即securefs此时运行的路径
 OSService::OSService() { m_dir_fd = AT_FDCWD; }
 
 OSService::~OSService()
@@ -313,8 +319,8 @@ OSService::OSService(StringRef path)
 std::shared_ptr<FileStream>
 OSService::open_file_stream(StringRef path, int flags, unsigned mode) const
 {
-    // openat(目录描述符, 接下去的路径？, flags, mode);
-    // 通过设置flags实现不存在则会自动创建
+    // openat(目录描述符, 相对路径, flags, mode);
+    // 通过设置flags实现不存在则会自动创建文件
     int fd = ::openat(m_dir_fd, path.c_str(), flags, mode);
     if (fd < 0)
         THROW_POSIX_EXCEPTION(
@@ -345,7 +351,7 @@ void OSService::lock() const
     {
         return;
     }
-    // 将data_dir这个目录锁住，别的进程不能对其进行操作这个时候
+    // 将data_dir这个目录锁住，别的加了flock的进程不能对其进行操作
     int rc = ::flock(m_dir_fd, LOCK_NB | LOCK_EX);
     if (rc < 0)
         THROW_POSIX_EXCEPTION(errno,
@@ -355,6 +361,7 @@ void OSService::lock() const
 // unix环境下的mkdir函数，调用了linux内核提供的库函数中提供的mkdirat
 void OSService::mkdir(StringRef path, unsigned mode) const
 {
+    // mode的含义参考https://blog.csdn.net/alidada_blog/article/details/83592408
     int rc = ::mkdirat(m_dir_fd, path.c_str(), mode);
     if (rc < 0)
         THROW_POSIX_EXCEPTION(errno,
@@ -370,6 +377,7 @@ void OSService::symlink(StringRef to, StringRef from) const
             errno, strprintf("symlink to=%s and from=%s", to.c_str(), norm_path(from).c_str()));
 }
 
+// 创建一个硬链接
 void OSService::link(StringRef source, StringRef dest) const
 {
     int rc = ::linkat(m_dir_fd, source.c_str(), m_dir_fd, dest.c_str(), 0);
@@ -380,7 +388,7 @@ void OSService::link(StringRef source, StringRef dest) const
     }
 }
 
-// 返回文件系统的信息，存到fs_info中,fuse_statvfs就是statvfs结构体
+// 返回当前目录下挂载的文件系统的信息（数据目录的文件系统信息），存到fs_info中,fuse_statvfs就是statvfs结构体
 // https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/sys_statvfs.h.html
 // 调用linux内核提供的库函数fstatvfs()实现
 void OSService::statfs(struct fuse_statvfs* fs_info) const
@@ -470,6 +478,7 @@ int64_t OSService::raise_fd_limit() noexcept
     int rc = ::getrlimit(RLIMIT_NOFILE, &rl);
     if (rc < 0)
     {
+        // errno是全局变量，表示上一个调用的错误代码，如果成功就为0
         WARN_LOG("Failed to query limit of file descriptors. Error code: %d.", errno);
         return 1024;
     }
@@ -499,7 +508,9 @@ void OSService::get_current_time(fuse_timespec& current_time)
 #ifdef __APPLE__
 ssize_t OSService::listxattr(const char* path, char* buf, size_t size) const noexcept
 {
-    // ::listxattr表示调用xattr.h提供的函数
+    // listxattr系统调用
+    // 返回值为扩展属性文件的数量
+    // 如果设置了一个文件的扩展属性，会创建对应一个扩展属性文件
     auto rc = ::listxattr(norm_path(path).c_str(), buf, size, XATTR_NOFOLLOW);
     return rc < 0 ? -errno : rc;
 }

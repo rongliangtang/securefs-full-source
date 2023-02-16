@@ -29,6 +29,7 @@ securefs::POSIXException::~POSIXException() = default;
 securefs::InvalidArgumentException::~InvalidArgumentException() = default;
 
 // [[noreturn]]关键字只对其作用的函数或类有效
+// TODO:这个关键字其实没用，因为都是抛出异常，不起作用的
 [[noreturn]] void securefs::throwFileTypeInconsistencyException()
 {
     throw ::securefs::FileTypeInconsistencyException();

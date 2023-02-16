@@ -6,8 +6,9 @@
 
 namespace securefs
 {
-// 类中的静态常函数，返回一个静态常量对象
-// 我猜测这样的写法是为了临时调用一下函数，返回一个局部静态变量，分配在全局区
+// https://blog.csdn.net/qq_36958104/article/details/85534108
+// 这样的写法是为了临时调用一下函数，返回一个局部静态变量，分配在全局区
+// 返回引用的目的是避免拷贝构造浪费内存，返回引用更加高效
 // 每次调用的数值不会变，这样这个静态对象就能一直用，不会重复创建对象来浪费内存
 const OSService& OSService::get_default()
 {
@@ -40,6 +41,7 @@ void OSService::ensure_directory(StringRef path, unsigned mode) const
     }
     catch (const ExceptionBase& e)
     {
+        // 如果异常码不是文件存在，则继续抛出
         if (e.error_number() != EEXIST)
             throw;
     }

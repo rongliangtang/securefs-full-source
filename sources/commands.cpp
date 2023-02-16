@@ -70,6 +70,7 @@ const char* get_version_header(unsigned version)
     }
 }
 
+// 创建json读取对象（详细文档看库手册）
 std::unique_ptr<Json::CharReader> create_json_reader()
 {
     Json::CharReaderBuilder builder;
@@ -83,6 +84,7 @@ enum class NLinkFixPhase
     FixingNLink
 };
 
+// TODO:修复硬链接计数，待细看
 void fix_hardlink_count(operations::FileSystemContext* fs,
                         Directory* dir,
                         std::unordered_map<id_type, int, id_hash>* nlink_map,
@@ -139,6 +141,7 @@ void fix_hardlink_count(operations::FileSystemContext* fs,
     }
 }
 
+// 对所有entry的type进行修复
 void fix_helper(operations::FileSystemContext* fs,
                 Directory* dir,
                 const std::string& dir_name,
@@ -225,13 +228,19 @@ void fix_helper(operations::FileSystemContext* fs,
     }
 }
 
+// 修复securefs文件系统
+// 原理：
 void fix(const std::string& basedir, operations::FileSystemContext* fs)
 {
+    // all_ids存放所有的id
+    // unordered_set是Key类型唯一对象集合的关联容器，key为id，value为id的后几个字节
     std::unordered_set<id_type, id_hash> all_ids{fs->root_id};
+    // 获得根目录AutoClosedFileBase对象
     AutoClosedFileBase root_dir = open_as(fs->table, fs->root_id, FileBase::DIRECTORY);
+    // 对所有entry的type进行修复
     fix_helper(fs, root_dir.get_as<Directory>(), "", &all_ids);
+    // 获得所有的id并对没有引用的id进行可选操作
     auto all_underlying_ids = find_all_ids(basedir);
-
     for (const id_type& id : all_underlying_ids)
     {
         if (all_ids.find(id) == all_ids.end())
@@ -272,6 +281,7 @@ void fix(const std::string& basedir, operations::FileSystemContext* fs)
         }
     }
 
+    // 修复硬链接（inode）问题?
     std::unordered_map<id_type, int, id_hash> nlink_map;
     puts("Fixing hardlink count ...");
     fix_hardlink_count(
@@ -327,7 +337,7 @@ Json::Value generate_config(unsigned int version,
     config["version"] = version;
     key_type password_derived_key;
     // master_key在写配置文件前就已经生成好了
-    // 在下面利用password经过argon2加密获得的password_derived_key来加密获得e_key，得到用户看得见的.securefs.json里的数据
+    // 下面利用password经过argon2获得password_derived_key
     // 备注：e_key经过password_derived_key可以解密获得master_key，master_key的作用是加密解密文件数据？？
     CryptoPP::AlignedSecByteBlock encrypted_master_key(nullptr, master_key.size());
 
@@ -362,8 +372,10 @@ Json::Value generate_config(unsigned int version,
     // 默认使用的是这个pbkdf_algorithm
     else if (pbkdf_algorithm == PBKDF_ALGO_ARGON2ID)
     {
+        // 从环境变量中获取SECUREFS_ARGON2_M_COST的值（test中会在环境变量中设置这些值）
         const char* env_m_cost = getenv("SECUREFS_ARGON2_M_COST");
         const char* env_p = getenv("SECUREFS_ARGON2_P");
+        // 环境变量中没有获取到就用代码设置
         uint32_t t_cost = rounds > 0 ? rounds : 9,
                  m_cost = env_m_cost ? std::stoi(env_m_cost) : (1u << 18u),
                  p = env_p ? std::stoi(env_p) : 4;
@@ -388,13 +400,16 @@ Json::Value generate_config(unsigned int version,
     {
         throw_runtime_error("Unknown pbkdf algorithm " + pbkdf_algorithm);
     }
+    // 把上面的pbkdf和salt信息放到配置文件json中
     config["pbkdf"] = pbkdf_algorithm;
     config["salt"] = hexify(salt);
 
     byte iv[CONFIG_IV_LENGTH];
     byte mac[CONFIG_MAC_LENGTH];
+    // 随机生成下面用到的iv
     generate_random(iv, array_length(iv));
 
+    // 利用password_derived_key来加密master_key获得e_key，得到用户看得见的.securefs.json里的数据
     CryptoPP::GCM<CryptoPP::AES>::Encryption encryptor;
     encryptor.SetKeyWithIV(
         password_derived_key.data(), password_derived_key.size(), iv, array_length(iv));
@@ -408,6 +423,7 @@ Json::Value generate_config(unsigned int version,
                                      master_key.data(),
                                      master_key.size());
 
+    // 把上面的IV、MAC、e_key放到配置文件json中
     Json::Value encrypted_key;
     encrypted_key["IV"] = hexify(iv, array_length(iv));
     encrypted_key["MAC"] = hexify(mac, array_length(mac));
@@ -415,11 +431,13 @@ Json::Value generate_config(unsigned int version,
 
     config["encrypted_key"] = std::move(encrypted_key);
 
+    // 如果format_version!=1，则block_size和iv_size是可变的，放到json中
     if (version >= 2)
     {
         config["block_size"] = block_size;
         config["iv_size"] = iv_size;
     }
+    // 如果开启了padding功能，需要将max_padding信息也放到json中
     if (max_padding > 0)
     {
         config["max_padding"] = max_padding;
@@ -487,7 +505,7 @@ void compute_password_derived_key(const Json::Value& config,
     }
 }
 
-// 根据密码来解密验证（password通过Argon2推导出AES的对称密钥），获取解密数据用的master_key
+// 根据配置信息来验证密码是否正确（password通过Argon2推导出AES的对称密钥），获取解密数据用的master_key
 bool parse_config(const Json::Value& config,
                   StringRef maybe_key_file_path,
                   const void* password,
@@ -529,11 +547,12 @@ bool parse_config(const Json::Value& config,
     std::string mac_hex = encrypted_key_json_value["MAC"].asString();
     std::string ekey_hex = encrypted_key_json_value["key"].asString();
 
+    // 将字符表示的16进制 转换为 对应数字表示的16进制，存在byte(无符号char)里
     parse_hex(salt_hex, salt.data(), salt.size());
     parse_hex(iv_hex, iv, array_length(iv));
     parse_hex(mac_hex, mac, array_length(mac));
 
-    // ？？这里干啥用
+    // 调整CryptoPP::AlignedSecByteBlock的size，因为1个byte=2个16进制数，所以字节数为16进制数的一半
     encrypted_key.resize(ekey_hex.size() / 2);
     parse_hex(ekey_hex, encrypted_key.data(), encrypted_key.size());
     master_key.resize(encrypted_key.size());
@@ -544,7 +563,7 @@ bool parse_config(const Json::Value& config,
         // 定义一个解密器
         CryptoPP::GCM<CryptoPP::AES>::Decryption decryptor;
         decryptor.SetKeyWithIV(wrapping_key.data(), wrapping_key.size(), iv, array_length(iv));
-        // 利用解密器进行解密和验证，
+        // 利用解密器进行解密和验证，返回bool类型
         return decryptor.DecryptAndVerify(
             // 来自函数参数，为result.master_key，存放解密后的master_key
             master_key.data(),
@@ -559,9 +578,11 @@ bool parse_config(const Json::Value& config,
             encrypted_key.size());
     };
 
+    // 程序使用的是这种keyfile使用方法
     // 利用password或keyfile来得到derived_key，从而进行解密和验证，成功则返回true
-    // 加密解密的过程待细看？？下面两个函数要细看
+    // 解密数据放在函数参数master_key中
     {
+        // 利用key_file获取new_salt
         securefs::key_type new_salt;
         hmac_sha256(salt, maybe_key_file_path, new_salt);
 
@@ -573,12 +594,14 @@ bool parse_config(const Json::Value& config,
         }
     }
 
-    // 这里有啥用，因为加密解密原理才可以这样写吗？？
+    // TODO:程序使用的不是这种keyfile使用方法，为什么还要进行这种尝试？
+    // 如果上面解密验证失败，尝试另一种使用keyfile的方法，对衍生密钥使用keyfile
     // `securefs` used to derive keyfile based key in another way. Try it here for compatibility.
     {
         securefs::key_type wrapping_key;
         securefs::key_type password_derived_key;
         compute_password_derived_key(config, password, pass_len, salt, password_derived_key);
+        // 利用key_file获取new_password_derived_key
         hmac_sha256(password_derived_key, maybe_key_file_path, wrapping_key);
         return decrypt_and_verify(wrapping_key);
     }
@@ -594,8 +617,9 @@ std::shared_ptr<FileStream> CommandBase::open_config_stream(const std::string& p
     return OSService::get_default().open_file_stream(path, flags, 0644);
 }
 
-// 读取配置文件并解析FSConfig结构体对应的数据出来，输入密码后才进行这一步
-// 密码正确，才能读取到配置文件，得到解密数据用的master_key等数据？？
+// 读取配置文件并解析将配置信息放到FSConfig结构体，并返回该结构及
+// 输入密码后才进行这一步
+// 密码正确，才能读取到配置文件，得到解密数据用的master_key等数据
 // void*可以指向任意地址
 FSConfig CommandBase::read_config(FileStream* stream,
                                   const void* password,
@@ -607,7 +631,9 @@ FSConfig CommandBase::read_config(FileStream* stream,
     
     // 读取配置文件到一个JSON数据结构中
     std::vector<char> str;
+    // 预留4000的vector大小，预留足够的大小，省得没有连续空间移来移去，这种写法能节省开销（空间换时间）
     str.reserve(4000);
+    // 将内容读取成char类型的vector
     while (true)
     {
         char buffer[4000];
@@ -616,14 +642,15 @@ FSConfig CommandBase::read_config(FileStream* stream,
             break;
         str.insert(str.end(), buffer, buffer + sz);
     }
-
+    // 通过json读取对象对内容进行解析
     Json::Value value;
     std::string error_message;
+    // vector中过得data()函数返回一个指向内存数组的直接指针
     if (!create_json_reader()->parse(str.data(), str.data() + str.size(), &value, &error_message))
         throw_runtime_error(
             strprintf("Failure to parse the config file: %s", error_message.c_str()));
 
-    // 根据password或keyfile对配置文件进行解析验证，验证失败会终止运行
+    // 根据配置文件对password和keyfile进行验证，验证失败会终止运行
     if (!parse_config(value,
                       maybe_key_file_path,
                       password,
@@ -650,7 +677,8 @@ static void copy_key(const CryptoPP::AlignedSecByteBlock& in_key, optional<key_t
     copy_key(in_key, &(out_key->value()));
 }
 
-// 写入配置文件到流中（create和changepassword命令会用到这个函数）
+// 写入配置文件到配置文件流中（create和changepassword命令会用到这个函数）
+// maybe_key_file_path传入的是std::string，会隐式转换为自己写的StringRef
 void CommandBase::write_config(FileStream* stream,
                                StringRef maybe_key_file_path,
                                const std::string& pbdkf_algorithm,
@@ -662,8 +690,9 @@ void CommandBase::write_config(FileStream* stream,
     // 产生随机的salt，salt是用来Argon2推导密钥用的，这里产生的salt会存在配置文件中
     // salt在后面经过hmac-sha256后生成effective_salt，再输入到pbkdf_algorithm中
     key_type salt;
+    // generate_random()利用CryptoPP实现
     generate_random(salt.data(), salt.size());
-    // 产生配置文件（应该在create命令中用到）
+    // 产生配置文件 toStyledString()：json->string
     auto str = generate_config(config.version,
                                pbdkf_algorithm,
                                config.master_key,
@@ -676,6 +705,8 @@ void CommandBase::write_config(FileStream* stream,
                                config.max_padding,
                                rounds)
                    .toStyledString();
+    // stream为传入的config_stream.get()，实际为UnixFileStream指针或WindowsFileStream指针
+    // 用到了多态，调用的sequential_write()为UnixFileStream或WindowsFileStream类中实现的方法
     stream->sequential_write(str.data(), str.size());
 }
 
@@ -852,14 +883,15 @@ public:
     // create命令执行主函数
     int execute() override
     {
-        // format和store_time同时设置了会报错
+        // format和store_time同时设置了会报错并结束程序
+        // 即format和store_time不能同时设置，store_time在format3时会默认开启，并且设置store_time会把format强制设置为3
         if (format.isSet() && store_time.isSet())
         {
             fprintf(stderr, "Conflicting flags --format and --store_time are specified together\n");
             return 1;
         }
 
-        // 当format=1的时候，不可以设置iv_size和block_size
+        // 当format=1的时候，不可以设置iv_size和block_size，设置了会报错并结束程序
         if (format.isSet() && format.getValue() == 1 && (iv_size.isSet() || block_size.isSet()))
         {
             fprintf(stderr,
@@ -867,33 +899,32 @@ public:
             return 1;
         }
 
-        // 设置了store_time的话强制把format设为3
+        // 获取format_version，设置了store_time的话强制把format设为3，否则就是format
         unsigned format_version = store_time.isSet() ? 3 : format.getValue();
 
-        // 创建data_dir文件夹，Tip：get_default()的写法很强
+        // 创建data_dir文件夹，Tip：get_default()这个函数的写法很强
         OSService::get_default().ensure_directory(data_dir.getValue(), 0755);
 
-        // 创建配置文件的结构体（master_key等数据）注意.securefs.json存放的是master_key加密后的数据
+        // 创建配置文件的结构体（master_key等数据）注意.securefs.json中存放的是master_key加密后的密文
         FSConfig config;
-        // 调整类型为CryptoPP::AlignedSecByteBlock的config.master_key的block大小，format=4时为4*32字节，format<4时为32字节
-        // 每个AlignedSecByteBlock变量对应一个block，通过这个类型可以对block进行安全存储操作？
-        // 后面加密解密的数据咋存？？
+        // 调整类型为CryptoPP::AlignedSecByteBlock的config.master_key的大小，format=4时为4*32字节，format<4时为32字节
+        // 每个CryptoPP::AlignedSecByteBlock类型变量中data以byte字节为单位
         config.master_key.resize(format_version < 4 ? KEY_LENGTH : 4 * KEY_LENGTH);
-        // 随机生成master_key
+        // 使用CryptoPP::OS_GenerateRandomBlock函数，随机生成master_key
         CryptoPP::OS_GenerateRandomBlock(false, config.master_key.data(), config.master_key.size());
 
-        // 给配置文件的结构体的一些变量赋值
+        // 给配置文件结构体的一些变量赋值
         config.iv_size = format_version == 1 ? 32 : iv_size.getValue();
         config.version = format_version;
         config.block_size = block_size.getValue();
         config.max_padding = max_padding.getValue();
 
-
-        // config_stream为打开.securefs.json的配置文件流，是一个shared_ptr
+        // config_stream为打开.securefs.json的配置文件流，是一个FileStream类型的shared_ptr
+        // get_real_config_path()返回配置文件的完全路径or相对路径
         auto config_stream
             = open_config_stream(get_real_config_path(), O_WRONLY | O_CREAT | O_EXCL);
-        // 如果存在一个未捕获或未完全处理完毕的异常，就将这个配置文件删掉
-        // DEFER()的写法好高级啊
+        // DEFER()宏的作用是将里面的代码延迟到作用域结束时执行
+        // 该作用域结束时，如果存在一个未捕获或未完全处理完毕的异常，则将这个配置文件删掉
         DEFER(if (std::uncaught_exception()) {
             OSService::get_default().remove_file(get_real_config_path());
         });
@@ -905,25 +936,24 @@ public:
                      password.data(),
                      password.size(),
                      rounds.getValue());
-        // 将config_stream这个shared_ptr指向释放掉
+        // 将config_stream这个shared_ptr指向释放掉，之后的引用计数应该为0，释放对象占用内存
         config_stream.reset();
 
-        // 如果format<4，进行一些特殊设置（因为format 1-3 与 4 的处理流程不一样，有一些特殊的属性要用）
-        // format 1-3 的流程比较复杂，先把format 4看懂，再来看format 1-3
+        // 如果format<4，初始化文件系统，创建数据根目录的密文文件（这样挂载的时候才能找到数据根目录下的文件信息）
         if (format_version < 4)
         {
             // 定义一个挂载选项，并对相关属性赋值
             operations::MountOptions opt;
             opt.version = format_version;
-            // opt.root为指向OSService对象的shared_ptr（调用的构造函数，的搭配data_dir路径的文件描述符）
+            // opt.root为指向OSService对象的shared_ptr（调用带数据路径的构造函数，可以获得data_dir路径的文件描述符）
             opt.root = std::make_shared<OSService>(data_dir.getValue());
             opt.master_key = config.master_key;
-            // 当format<3时，flags加入StoreTime记号
+            // 当format=3时，flags加入StoreTime记号，否则为0
             opt.flags = format_version < 3 ? 0 : kOptionStoreTime;
             opt.block_size = config.block_size;
             opt.iv_size = config.iv_size;
 
-            // 创建FileSystemContext对象并进行构造，这里的构造lock_stream并没有赋值，在mount的时候才创建并赋值给lock_stream
+            // 创建FileSystemContext对象并进行根目录的构造，这里的构造lock_stream并没有赋值，在mount的时候才创建并赋值给lock_stream
             operations::FileSystemContext fs(opt);
             // DIRECTORY为FileBase定义的byte类型，用来表示type
             // table为ShardedFileTableImpl
@@ -1120,23 +1150,23 @@ class MountCommand : public _SinglePasswordCommandBase
 private:
     // SwitchArg为开关类，如果在命令行上输入了开关对应的参数，那么getValue方法将返回与开关默认值相反的值。
     // classname x{..,..,}也能创建对象，调用对应的构造函数
-    // 单线程模式，利用fuse来实现？？
+    // 单线程模式，利用fuse来实现（fuse的单线程模式，即用单线程读取用户挂载点发出的系统调用请求，这样效率低、慢，但是不存在线程安全问题）
     TCLAP::SwitchArg single_threaded{"s", "single", "Single threaded mode"};
     // 在后台运行securefs，通过fuse来实现
     TCLAP::SwitchArg background{
         "b", "background", "Run securefs in the background (currently no effect on Windows)"};
-    // 关闭完整性验证（不安全），完整性是指什么完整？？
+    // TODO:关闭完整性验证（不安全），完整性是指什么完整？？
     // 没有加入到parse中，这个参数等于没用
     TCLAP::SwitchArg insecure{
         "i", "insecure", "Disable all integrity verification (insecure mode)"};
     // 禁用xattr功能，macos要禁用，有bug
     TCLAP::SwitchArg noxattr{"x", "noxattr", "Disable built-in xattr support"};
-    // 输出更详细的log信息
+    // 输出更详细的log信息，调整logger等级
     TCLAP::SwitchArg verbose{"v", "verbose", "Logs more verbose messages"};
-    // 跟踪所有的调用，放到verbose中
+    // 跟踪所有的调用log，调整logger等级
     TCLAP::SwitchArg trace{"", "trace", "Trace all calls into `securefs` (implies --verbose)"};
     // ValueArg为解析值类，在flag后面跟上模版对应的类型的值，会解析到对应的值
-    // log为日志文件的存放路径
+    // log为日志文件的存放路径，开启后日志会保存在该文件中，不在控制台输出
     TCLAP::ValueArg<std::string> log{
         "", "log", "Path of the log file (may contain sensitive information)", false, "", "path"};
     // MultiArg与ValueArg类似，但是返回的不是一个值而是数组
@@ -1158,7 +1188,7 @@ private:
     // fssubtype表示挂载的时候文件系统子类型，通过fuse实现
     TCLAP::ValueArg<std::string> fssubtype{
         "", "fssubtype", "Filesystem subtype shown when mounted", false, "securefs", "fssubtype"};
-    // 是否禁用文件锁定功能，咋个锁定法？？好像代码没有实现诶
+    // 是否禁用文件锁定功能，即禁用format1-3的flock锁
     TCLAP::SwitchArg noflock{"",
                              "noflock",
                              "Disables the usage of file locking. Needed on some network "
@@ -1177,7 +1207,7 @@ private:
                                                "none",
 #endif
                                                ""};
-    // 缓存文件属性等操作的的时间，默认是30s，超过应该是超时
+    // 缓存文件属性等操作的的时间，默认是30s，超过应该是超时，通过fuse实现
     TCLAP::ValueArg<int> attr_timeout{"",
                                       "attr-timeout",
                                       "Number of seconds to cache file attributes. Default is 30.",
@@ -1187,7 +1217,8 @@ private:
     
 private:
     // 将args从std::vector<std::string>转为std::vector<const char*>格式
-    // 目的是？？？
+    // 因为有些c库函数参数类型为char*
+    // 函数参数vector传引用比传值更高效，避免了复制的开销
     std::vector<const char*> to_c_style_args(const std::vector<std::string>& args)
     {
         std::vector<const char*> result(args.size());
@@ -1263,22 +1294,23 @@ public:
         // require_confirmation = false 表示不需要二次验证
         get_password(false);
 
-        // 根据命令进行一些日志操作
+        // 根据命令设置日志的等级
         if (global_logger && verbose.getValue())
             global_logger->set_level(kLogVerbose);
         if (global_logger && trace.getValue())
             global_logger->set_level(kLogTrace);
 
-        // 设置是否开启文件锁定功能？？
-        // 这个功能有啥用？？猜测是只能同时打开一个正常
+        // 设置是否开启flock锁
+        // set_lock_enabled函数中的操作是原子操作
         set_lock_enabled(!noflock.getValue());
+        // 如果禁用flock且不开启单线程模式，操作文件是危险的（因为读取用户挂载点的请求是多线程的，所以可能存在多线程操作同一个文件的情况，线程不安全）
         if (noflock.getValue() && !single_threaded.getValue())
         {
             WARN_LOG("Using --noflock without --single is highly dangerous");
         }
     }
 
-    // 重新创建logger对象函数（判断要不要log保存在指定文件）
+    // 重新创建logger对象函数（根据命令设置log输出位置和等级）
     void recreate_logger()
     {
         // 判断是否设置开启log功能，开启了就是把log保存在本地
@@ -1347,12 +1379,12 @@ public:
         }
 #endif
         // 打开配置文件（.securefs.json），获得配置文件流
-        // 若不能打开，则抛出error
         std::shared_ptr<FileStream> config_stream;
         try
         {
             config_stream = open_config_stream(get_real_config_path(), O_RDONLY);
         }
+        // 若不能打开，则抛出error并结束程序
         catch (const ExceptionBase& e)
         {
             if (e.error_number() == ENOENT)
@@ -1366,14 +1398,14 @@ public:
             }
             throw;
         }
-        // 读取配置文件（这里会进行密码和keyfile的验证）
+        // 重要：读取配置文件（这里会进行密码和keyfile的验证）
         auto config = read_config(
             config_stream.get(), password.data(), password.size(), keyfile.getValue());
-        // 读完把配置文件流指针置空
+        // 读完把配置文件流指针置空，引用计数为0，会释放对象占用的内存
         config_stream.reset();
-        // SecureWipeBuffer这个方法将password.data()这个缓冲区擦除置0
+        // SecureWipeBuffer这个方法将password.data()这个缓冲区擦除置0（把旧数据擦除置0，更加安全）
         CryptoPP::SecureWipeBuffer(password.data(), password.size());
-        // 判断随机生成的主钥是不是脆弱的？？什么原理
+        // TODO:判断随机生成的主钥是不是脆弱的？？什么原理
         bool is_vulnerable = popcount(config.master_key.data(), config.master_key.size())
             <= config.master_key.size();
         // 如果是脆落的提示重新创建一个文件系统，并及时迁移数据
@@ -1385,13 +1417,15 @@ public:
                 "Please immediate migrate your old data to a newly created securefs filesystem,\n"
                 "and remove all traces of old data to avoid information leakage!");
             fputs("Do you wish to continue with mounting? (y/n)", stdout);
+            // stdin、stdout、stderr和FILE文件流都是有缓冲区的，当缓冲区满了数据才会放出来，使用fflush(文件流)可以将数据从缓冲区立即输出出来
+            // https://blog.csdn.net/shulianghan/article/details/121388293
             fflush(stdout);
             if (getchar() != 'y')
                 return 110;
         }
 
         // 尝试提高文件描述符的数量限制
-        // 虽然raise_fd_limit()声明了noexcept，但是这里用来try catch，所以还是能捕获到异常
+        // TODO:这里的try catch实际是无效的，raise_fd_limit()中不会抛出异常？
         try
         {
             int fd_limit = OSService::raise_fd_limit();
@@ -1404,8 +1438,8 @@ public:
                      e.what());
         }
 
-        // 创建一个string类型的vector容器，来存放fuse的option
-        // 各个参数具体的意思是？
+        // 创建一个string类型的vector容器fuse_args，来存放fuse的设置参数
+        // TODO:fuse的各个参数含义在哪查？
         std::vector<std::string> fuse_args{
             "securefs",
             "-o",
@@ -1420,7 +1454,7 @@ public:
             strprintf("attr_timeout=%d", attr_timeout.getValue()),
             "-o",
             strprintf("negative_timeout=%d", attr_timeout.getValue()),
-// 如果是windows系统，放一些windows要用的参数，含义是？
+// 如果是windows系统，放一些windows要用的参数
 #ifndef _WIN32
             "-o",
             "atomic_o_trunc",
@@ -1447,6 +1481,7 @@ public:
             fuse_args.emplace_back("-f");
 
 // 如果系统是apple系统的话
+// 注意macfuse和libfuse有一些区别的，比如下面这个noappledouble参数
 #ifdef __APPLE__
         // ::getenv()表示获取环境变量中对应的设置
         const char* copyfile_disable = ::getenv("COPYFILE_DISABLE");
@@ -1469,6 +1504,7 @@ public:
         {
             fuse_args.emplace_back("--VolumePrefix=" + mount_point.getValue().substr(1));
         }
+        // 设置fuse超时时间
         fuse_args.emplace_back("-o");
         fuse_args.emplace_back(strprintf("FileInfoTimeout=%d", attr_timeout.getValue() * 1000));
         fuse_args.emplace_back("-o");
@@ -1494,13 +1530,12 @@ public:
         }
 
 #ifdef WIN32
-        // 这里的代码应该没有写全把？？
+        // TODO:这里的代码应该没有写全把
         if (!network_mount)
 #endif
-        // 把挂载点的值加入到fuse_args中
+        // 把挂载点的路径加入到fuse_args中
         fuse_args.emplace_back(mount_point.getValue());
-        // 打印 VERBOSE_LOG，输出到终端
-        // 测试了，输入-v就会把verboselog输出来
+        // 打印 VERBOSE_LOG，输出文件系统的一些信息到终端
         VERBOSE_LOG("Filesystem parameters: format version %d, block size %u (bytes), iv size %u "
                     "(bytes)",
                     config.version,
@@ -1513,27 +1548,28 @@ public:
             VERBOSE_LOG("Master key: %s", hexify(config.master_key).c_str());
         }
 
-        // 定义fsopt对象，包含与securefs挂载有关的属性和os操作
-        // fsopt会传入到fuse中作为fuse_context->private_data，存在整个fuse生命周期中
+        // 定义fsopt对象，包含与securefs挂载有关的属性和OSService对象
+        // fsopt会传入到fuse中作为fuse_context->private_data，存在整个fuse生命周期中，以便fuse中的operation使用
         operations::MountOptions fsopt;
         // 进行fsopt相关属性的赋值
-        // 在这里进行了OSService类的构造，后面这个root会到FileSystem中的root中？？
+        // 创建与数据目录有关的OSService对象root
         fsopt.root = std::make_shared<OSService>(data_dir.getValue());
         fsopt.block_size = config.block_size;
         fsopt.iv_size = config.iv_size;
         fsopt.version = config.version;
         fsopt.master_key = config.master_key;
-        // 标志：如果version=3的话，需要存储时间戳到元文件中（目的是为了能够用云服务同步数据？？）
+        // 如果version=3的话，设置存储时间戳标志，需要存储时间戳到元文件中（存储时间戳是为了跨云服务同步用）
         fsopt.flags = config.version != 3 ? 0 : kOptionStoreTime;
         // max_padding_size是为模糊所有文件的大小，要添加到所有文件的最大填充数。每个文件都有不同的填充。启用此功能会带来很大的性能成本。
         fsopt.max_padding_size = config.max_padding;
         // insecure为true表示开启了禁用完整性验证，若开启了，则将对应的标志位或上去
+        // 这个功能实际没有用，因为没有解析insecure这个参数
         if (insecure.getValue())
             fsopt.flags.value() |= kOptionNoAuthentication;
-        // 不分大小写=false
+
+        // 设置文件名的规范化形式
+        // 在mac上默认是nfc，其他平台默认none
         bool case_insensitive = false;
-        // 开启nfc=false，nfc是一种规范化形式，macos默认是nfc
-        // 对文件名的规范化形式进行定义
         bool enable_nfc = false;
         if (normalization.getValue() == "nfc")
         {
@@ -1553,6 +1589,7 @@ public:
             throw_runtime_error("Invalid flag of --normalization: " + normalization.getValue());
         }
         // 如果case_insensitive=true
+        // 不区分文件名大小写，linux、windows、macos上的系统都是不区分文件名大小写的，所以securefs最好与其保持一致
         if (case_insensitive)
         {
             INFO_LOG("Mounting as a case insensitive filesystem");
@@ -1568,9 +1605,10 @@ public:
         }
 
         // 如果 启用的version < 4（即用的是Full format 1-3）会产生一个“.securefs.lock”文件
-        // “.securefs.lock”文件的作用是实现一个数据目录同时只能被一个securefs进程操作
-        // 不同的securefs进程会出现访问数据不一致的情况（用RAM做缓存所导致的？？？），这样进行操作容易出错，所以要防止多个securefs进程操作同一个数据目录
-        // 注意：lite format中的不同的securefs进程之间的数据是同步的，所以允许多个securefs进程操作同一个数据目录
+        // TODO:为什么不同的securefs进程会出现访问数据不一致的情况
+        // 正确：“.securefs.lock”文件的作用是实现一个数据目录同时只能被一个securefs进程操作
+        // 为什么？？？不同的securefs进程会出现访问数据不一致的情况（用RAM做缓存所导致的？？？），这样进行操作容易出错，所以要防止多个securefs进程操作同一个数据目录
+        // 注意：lite format中的不同的securefs进程之间的数据是同步的（为什么是同步的？？？），所以允许多个securefs进程操作同一个数据目录
         if (config.version < 4)
         {
             try
@@ -1611,6 +1649,8 @@ public:
             // fsopt.root是一个类指针，所以访问类中的成员要用 -> 
             // listxattr返回当前目录下的扩展属性的大小，有的话就>0
             // 这里用listxattr的作用主要是判断有没有扩展属性支持
+            // .表示当前目录
+            // ..表示上一级目录
             auto rc = fsopt.root->listxattr(".", nullptr, 0);
             // 如果调用xattr相关函数失败，则warning
             if (rc < 0)
@@ -1628,19 +1668,22 @@ public:
         struct fuse_operations operations;
         if (config.version <= 3)
         {
-            // operations命名空间
+            // operations命名空间中的init_fuse_operations函数
+            // 初始化fuse_operation，实现fuse定义的函数集，xattr参数用于判断要不要实现与xattr有关的operation
             operations::init_fuse_operations(&operations, native_xattr);
         }
         // 如果启用的version=4，则fuse基本操作应该用lite版
         else
         {
-            // lite命名空间
-            // 初始化fuse_operation，实现fuse定义的函数集
+            // lite命名空间中的init_fuse_operations函数
+            // 初始化fuse_operation，实现fuse定义的函数集，xattr参数用于判断要不要实现与xattr有关的operation
             lite::init_fuse_operations(&operations, native_xattr);
         }
-        // VERBOSE_LOG，输出fuse的option
+        // VERBOSE_LOG，输出设置的所有fuse参数
         VERBOSE_LOG("Calling fuse_main with arguments: %s", escape_args(fuse_args).c_str());
-        // 重新创建logger对象函数（判断要不要log保存在指定文件）
+        // 重新创建logger对象函数（根据命令设置log输出位置和等级）
+        // 在执行这个函数之前的logger一定是在程序启动时，输出在控制台的
+        // 只有与fuse的operation有关的log有可能存在文件里，启动前（fuse启动前的代码）的log都是在控制台输出
         recreate_logger();
         // 利用fuse_main函数和重写high_level的api来实现自己的用户级文件系统（如果用low_level可以实现更灵活的功能，但是需要读懂fuse源码）
         // fuse_main函数中的fuse_args在前面已经构造好了，包括挂载点、option等
@@ -1703,7 +1746,7 @@ public:
             config_stream.get(), password.data(), password.size(), keyfile.getValue());
         config_stream.reset();
 
-        // 如果format >= 4，则报错不支持修复
+        // 如果format >= 4，则报错不支持修复，即只有format为1、2、3才可以修复
         if (config.version >= 4)
         {
             fprintf(stderr,
@@ -1711,22 +1754,27 @@ public:
                     config.version);
             return 3;
         }
-        // 将password擦除，重新随机生成
+
+        // 将用户输入的password擦除，重新随机生成
         generate_random(password.data(), password.size());    // Erase user input
 
+        // 创建MountOptions结构体变量，将用户输入的datadir和原配置文件中的信息放进去
         operations::MountOptions fsopt;
         fsopt.root = std::make_shared<OSService>(data_dir.getValue());
-        // 加锁，直至运行结束，别的线程不能对data_dir目录进行操作
+
+        // 加flock锁，直至运行结束，别的尝试flock的线程不能对data_dir目录进行操作
+        // 防止不同的securefs线程在对data_dir目录进行操作
         fsopt.root->lock();
+
         fsopt.block_size = config.block_size;
         fsopt.iv_size = config.iv_size;
         fsopt.version = config.version;
         fsopt.master_key = config.master_key;
         fsopt.flags = config.version != 3 ? 0 : kOptionStoreTime;
         
-        // FileSystemContext这个类看来有必要细看一下？？
-        // 下面两行待看
+        // 创建FileSystemContext文件系统上下文对象
         operations::FileSystemContext fs(fsopt);
+        // 利用data_dir路径和FileSystemContext对象进行修复
         fix(data_dir.getValue(), &fs);
         return 0;
     }
@@ -1758,9 +1806,9 @@ public:
     int execute() override
     {
         using namespace CryptoPP;
-        // 输出securefs的版本，利用GIT可以得到，在cmake文件中读取
+        // 输出securefs的版本，利用引入的cmake-modules获取
         printf("securefs %s\n", GIT_VERSION);
-        // 输出Crypto++的版本
+        // 输出Crypto++的版本，利用cryptopp中定义的宏获取
         printf("Crypto++ %g\n", CRYPTOPP_VERSION / 100.0);
 // 如果是windows系统，输出WinFsp版本
 #ifdef WIN32
@@ -1775,8 +1823,7 @@ public:
                 printf("WinFsp %u.%u\n", vn >> 16, vn & 0xFFFFu);
             }
         }
-// 如果是unix系统，输出libfuse版本
-#else
+#else   // 如果是unix系统，输出libfuse版本
         typedef int version_function(void);
         auto fuse_version_func
             = reinterpret_cast<version_function*>(::dlsym(RTLD_DEFAULT, "fuse_version"));
@@ -1786,10 +1833,11 @@ public:
         // utf8proc是unicode编码工具，应该是用来对文件数据进行编码解码用的
         printf("utf8proc %s\n", utf8proc_version());
 
+// 输出是否有硬件特性支持加密，有硬件支持的话加解密会更快
 #ifdef CRYPTOPP_DISABLE_ASM
         fputs("\nBuilt without hardware acceleration\n", stdout);
 #else
-// 输出是否有硬件特性支持加密，有硬件支持的话加解密会更快？
+// 有硬件特性支持加密且符合cpu架构，执行相应测试函数并输出测试结果
 #if CRYPTOPP_BOOL_X86 || CRYPTOPP_BOOL_X32 || CRYPTOPP_BOOL_X64
         printf("\nHardware features available:\nSSE2: %s\nSSE3: %s\nSSE4.1: %s\nSSE4.2: "
                "%s\nAES-NI: %s\nCLMUL: %s\nSHA: %s\n",
@@ -1840,29 +1888,33 @@ public:
     // info命令执行函数
     int execute() override
     {
-        // fs文件流
+        // 创建FileStream对象shared_ptr
         std::shared_ptr<FileStream> fs;
         struct fuse_stat st;
-        // 判断路径是不是存在
+        // 判断用户输入路径是不是存在
         if (!OSService::get_default().stat(path.getValue(), &st))
         {
             ERROR_LOG("The path %s does not exist.", path.getValue().c_str());
         }
 
-        // 读取配置文件流
+        // 获得刚刚输入的path
         std::string real_config_path = path.getValue();
+        // 如果输入的path是目录，则加上配置文件名，得到配置文件完成路径
         // unix或linux环境编程要会搞，才写得出这个代码
         if ((st.st_mode & S_IFMT) == S_IFDIR)
             real_config_path.append("/.securefs.json");
+        // 赋值FileStream对象shared_ptr
         fs = OSService::get_default().open_file_stream(real_config_path, O_RDONLY, 0);
 
-        Json::Value config_json;
         // 将配置文件流解析成JSON
+        Json::Value config_json;
         // Open a new scope to limit the lifetime of `buffer`.
+        // 创建一个新的作用域来限制buffer生命周期
         {
             std::vector<char> buffer(fs->size(), 0);
             fs->read(buffer.data(), 0, buffer.size());
             std::string error_message;
+            // 创建json读取对象，并对buffer按char进行解析，将结果放到config_json中
             if (!create_json_reader()->parse(
                     buffer.data(), buffer.data() + buffer.size(), &config_json, &error_message))
             {
@@ -1871,7 +1923,7 @@ public:
             }
         }
 
-        // 输出文件系统的信息
+        // 输出配置文件信息
         unsigned format_version = config_json["version"].asUInt();
         if (format_version < 1 || format_version > 4)
         {

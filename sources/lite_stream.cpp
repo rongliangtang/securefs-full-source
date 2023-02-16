@@ -130,7 +130,7 @@ namespace lite
 
     AESGCMCryptStream::~AESGCMCryptStream() {}
 
-    // 调用streamBase的flush()，然后调用哪个？？？
+    // 调用streamBase的flush()，然后调用UnixFileStream或WindowsFileStream中的方法
     void AESGCMCryptStream::flush() { m_stream->flush(); }
 
     bool AESGCMCryptStream::is_sparse() const noexcept { return m_stream->is_sparse(); }

@@ -69,6 +69,7 @@ if(UNIX)
 else()
 # 如果不是UNIX系统，那就是Windows系统咯
     # add_definitions的功能和C++中的#define是一样的，在C++文件中可以使用下述定义的参数
+    # #define NOMINMAX 定义该宏后可以阻止编译器使用std::min和std::max
     add_definitions(-DNOMINMAX=1)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS=1)
     add_definitions(-D__STDC__=1)

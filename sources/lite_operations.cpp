@@ -21,17 +21,22 @@ namespace lite
             ::securefs::operations::MountOptions* opt;
         };
 
-        // 返回一个FileSystem类指针对象
+        // 返回一个FileSystem对象的指针
+        // TODO:为什么使用optional
         FileSystem* get_local_filesystem()
         {
             // thread_local是c++11为线程安全引进的变量声明符，thread_local就是达到线程内独有的全局变量
             // thread_local修饰过的变量，变量的生存周期不再以程序为准，而是以线程生命周期，thread_local声明的变量存储在线程开始时分配，线程结束时销毁。
             // 在类的成员函数内定义了 thread_local 变量，则对于同一个线程内的该类的多个对象都会共享一个变量实例，并且只会在第一次执行这个成员函数时初始化这个变量实例
             // 当使用thread_local描述类成员变量时，必须是static的。传统的static类成员变量是所有对象共享，而static thread_local修饰的时候会变成在线程内共享，线程间不是共享的（对象可能来自同一线程，可能来自多个线程）
-            // 具体还不是特别理解需要多学习c++线程方面的知识？？
+
+            // thread_local关键字使每个线程都会有独自的指定变量，static说明这个变量在这个程序中的堆中，在整个程序中存在，作用域在这个函数内
+            // thread_local和static关键字组合，表示该变量在一个线程中申请后是一直存在的，作用域在这个函数内（fuse默认使用多线程处理挂载点发出的请求，所以可能会有多线程调用fuse重写的方法）
+            // optional模版类中的模版可以有值也可以没值
             static thread_local optional<FileSystem> opt_fs;
 
             // local_opt_fs为opt_fs的引用，opt_fs为FileSystem类型的optional对象
+            // TODO:取引用有啥意义，引用类似指针？占用内存小，开销小，后面也不设计拷贝构造呀，为啥要引用？
             auto& local_opt_fs = opt_fs;
             // 在同一个线程中，若已经有local_opt_fs对象并实例化后则直接返回
             if (local_opt_fs)
@@ -86,7 +91,7 @@ namespace lite
                       hexify(xattr_key).c_str(),
                       hexify(padding_key).c_str());
 
-            // 执行FileSystem的构造函数
+            // 执行FileSystem的构造函数（通过new创建对象）
             local_opt_fs.emplace(ctx->opt->root,
                                  name_key,
                                  content_key,
@@ -96,18 +101,18 @@ namespace lite
                                  ctx->opt->iv_size.value(),
                                  ctx->opt->max_padding_size,
                                  ctx->opt->flags.value());
-            // &(*local_opt_fs)是什么鬼？？？
+            // &(*local_opt_fs)表示取出该模版类的对象的指针
             return &(*local_opt_fs);
         }
 
         // 设置文件句柄（目录也是文件）
         // fuse_file_info结构体表示打开文件的信息
-        // 传入的Base一般为其子类File或者Directory及其子类，然后再将其转为整数存在info->fh中
+        // 传入的Base指针一般为其子类File或者Directory及其子类，然后再将其转为整数存在info->fh中
         // 后面我们再把infor->fh转回对象指针
         void set_file_handle(struct fuse_file_info* info, securefs::lite::Base* base)
         {
             // fh是文件句柄
-            // 将base类转为uint64_t整数的文件句柄
+            // 将base类指针转为uint64_t整数的文件句柄
             info->fh = reinterpret_cast<uintptr_t>(base);
         }
 
@@ -151,23 +156,26 @@ namespace lite
     }    // namespace
     
     // 初始化文件系统：返回的ctx中的opt是一个MountOptions对象，存放了要用的master_key等关键信息
+    // 这个函数实际做的是将private_data存的对象取出来放到一个结构体中，再将这个结构体对象放回provate_data中
+    // TODO:为什么要用一个结构体做中介
     void* init(struct fuse_conn_info* fsinfo)
     {
-        (void)fsinfo;
+// 如果用的是WINFSP
 #ifdef FSP_FUSE_CAP_READDIR_PLUS
         fsinfo->want |= (fsinfo->capable & FSP_FUSE_CAP_READDIR_PLUS);
 #endif
-        // private_data实际是fuse_main()中传入的opt，在mount命令的时候就读取好了，已经赋好值了的，存放了master_key等关键信息
+        // private_data实际是fuse_main()中传入的fsopt，在mount命令的时候就读取好了，已经赋好值了的，存放了master_key等关键信息
         void* args = fuse_get_context()->private_data;
         INFO_LOG("init");
         // 将fuse_get_context()->private_data转为MountOptions*，即BundledContext
         auto ctx = new BundledContext;
         ctx->opt = static_cast<operations::MountOptions*>(args);
         // 返回值会放到private_data中
+        // 返回值将在fuse_context的private_data字段中传递给所有文件操作，并作为参数传递给destroy()方法
         return ctx;
     }
 
-    // 清除文件系统：释放指针
+    // 清除文件系统：释放new申请的对象
     void destroy(void*)
     {
         // 将fuse_get_context()->private_data转为BundledContext*，防止类型不对，并释放该指针
@@ -183,8 +191,11 @@ namespace lite
         auto func = [=]()
         {
             if (!buf)
+                /* Bad address */
                 return -EFAULT;
+            // 获取文件系统对象（每个fuse处理线程独有的，线程内共用）
             auto filesystem = get_local_filesystem();
+            // 获取数据目录的文件系统信息，并存到buf中
             filesystem->statvfs(buf);
             // Due to the Base32 encoding and the extra 16 bytes of synthesized IV
             // 因为name的Base32编码和额外16byte的IV，所以buf->f_namemax需要这样设置
@@ -192,19 +203,23 @@ namespace lite
             buf->f_namemax = buf->f_namemax * 5 / 8 - 16;
             return 0;
         };
-        // FuseTracer类的作用是？？猜测是跟踪函数调用，输出日志？？
+        // FuseTracer类的作用是执行匿名函数，跟踪当前这个函数调用，输出日志
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {buf}});
     }
 
-    // 获得未打开文件的属性：通过执行FileSystem对象中的stat()来实现
+    // 获得文件的属性：通过执行FileSystem对象中的stat()来实现
     // 输入的path是明文路径，将path对应的加密文件的属性存到st中
+    // 传入的path是以挂载点为根目录的相对路径，如挂载点下的a.txt的path为/a.txt
     int getattr(const char* path, struct fuse_stat* st)
     {
         auto func = [=]()
         {
+            // 获取FileSystem对象
             auto filesystem = get_local_filesystem();
             // 将密文文件的stat读出来，然后改其中的st_size为实际明文大小，这样挂载点显示才正确
             if (!filesystem->stat(path, st))
+                /* No such file or directory */
+                // 要返回负数，重写的fuse操作执行错误要返回对应的错误码，以便异常进行捕捉和判断
                 return -ENOENT;
 
             return 0;
@@ -213,23 +228,37 @@ namespace lite
     }
 
     // 获得已打开文件的属性
+    // 如果文件信息可获得，则调用此方法而不是getattr()方法。目前，如果实现了create()方法，则只在create()方法之后调用。
     int fgetattr(const char* path, struct fuse_stat* st, struct fuse_file_info* info)
     {
         auto func = [=]()
         {
+            // 获得文件句柄，转换成Base类指针并返回
+            // open一个文件后，会将对象存在info中，这样fgetattr等能获取到
             auto base = get_base_handle(info);
+            // 如果是File多态，调用File子类中的as_file()函数，返回File类型指针
+            // 否则返回nullptr
             auto file = base->as_file();
-            // 判断是文件还是目录
+            // 判断是文件还是目录，调用不同的函数
             if (file)
             {
+                // exclusive为true表示开启flock
+                // 类中的互斥锁只能保证对该类是互斥访问的，也就是只能保证同一个对象（同一文件描述符）的互斥访问
+                // flock锁可以保证不同对象（不同文件描述符）的互斥访问
+                // LockGuard模版类定义的对象在创建的时候会上锁，销毁的时候释放
                 LockGuard<File> lock_guard(*file, false);
                 // 如果是文件，则调用File类的fstat()函数
+                // 因为打开的文件涉及线程安全问题，所以需要用File类
                 file->fstat(st);
                 return 0;
             }
+            // 如果是Directory多态，调用Directory子类中的as_file()函数，返回Directory类型指针
+            // 否则返回nullptr
             auto dir = base->as_dir();
             if (dir)
             {
+                // 目录不存在线程安全问题，因为其不像文件，具有文件内容，所以使用FileSystem对象
+
                 auto filesystem = get_local_filesystem();
                 // 如果是目录，则调用FileSystem类的stat()函数
                 if (!filesystem->stat(dir->path(), st))
@@ -251,6 +280,7 @@ namespace lite
             // filesystem->opendir(path)返回LiteDirectory类型的对象unique_str
             auto traverser = filesystem->opendir(path);
             // 调用release会切断unique_ptr和它原来管理的对象的联系,并返回对象的指针
+            // 将对象的指针转换为文件描述符，存在info里面（打开的目录后的其他操作可以直接获得对应的info，猜测fuse是通过建立文件描述符和info的关系实现的）
             set_file_handle(info, traverser.release());
             return 0;
         };
@@ -262,6 +292,7 @@ namespace lite
     {
         auto func = [=]()
         {
+            // 释放创建的Directory对象，实际为多态LiteDirectory对象
             delete get_base_handle(info);
             return 0;
         };
@@ -269,6 +300,8 @@ namespace lite
     }
 
     // 读取目录
+    // 读取目录这将取代旧的getdir()接口。新的应用程序应该使用它。文件系统可以在两种操作模式之间进行选择:1)readdir实现忽略offset参数，并将0传递给填充函数的offset。
+    // 填充函数不会返回'1'(除非发生错误)，因此整个目录都是在一个readdir操作中读取的。这就像旧的getdir()方法一样。2) readdir实现跟踪目录条目的偏移量。它使用offset参数并始终将非零offset传递给填充函数
     // buff存放目录entry
     int readdir(const char* path,
                 void* buf,
@@ -285,10 +318,11 @@ namespace lite
             // rewind需要上锁，这里通过lock_guard的构造和析构来上锁解锁
             LockGuard<Directory> lock_guard(*traverser);
             // traverser从文件描述符转换过来，实际是Base类多态的LiteDirectory
+            // 将目录遍历指针移到起点
             traverser->rewind();
             // name用来获取明文路径
             std::string name;
-            // fuse_stat结构体（stat在目录中实际是没用的，因为目录不显示大小，文件才显示大小，而需要读取文件属性的时候是会调用stat系统调用，与readdir这里无法）
+            // fuse_stat结构体（stat在目录中实际是没用的，因为目录不显示大小，文件才显示大小，而需要读取文件属性的时候是会调用stat系统调用）
             // https://www.cnblogs.com/yaowen/p/4801541.html
             struct fuse_stat stbuf;
             memset(&stbuf, 0, sizeof(stbuf));
@@ -328,7 +362,9 @@ namespace lite
         auto func = [=]()
         {
             auto filesystem = get_local_filesystem();
+            // AutoClosedFile类为File类的unique_ptr别名
             AutoClosedFile file = filesystem->open(path, O_RDWR | O_CREAT | O_EXCL, mode);
+            // 将创建的对象指针取出，放到info中
             set_file_handle(info, file.release());
             return 0;
         };
@@ -348,7 +384,7 @@ namespace lite
             // 后面的操作要用到该对象
             // 似乎用了优化，线程里面创建过这个对象就不会再创建？？线程这边要好好看看，很有作用！！
             auto filesystem = get_local_filesystem();
-            // file为File类，里面存放了UnixFileStream(加密文件的句柄)、key等
+            // file为File类的unique_ptr，里面存放了UnixFileStream(加密文件的句柄)、key等
             AutoClosedFile file = filesystem->open(path, info->flags, 0644);
             // 将打开文件获得的对象转为句柄存在info中，后面的操作再通过info中的句柄来取得对象，很nice的操作！
             set_file_handle(info, file.release());
@@ -358,11 +394,13 @@ namespace lite
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{path}, {info}});
     }
 
-    // 释放打开的文件，通过释放指针实现
+    // 释放打开的文件，通过释放file对象实现
     int release(const char* path, struct fuse_file_info* info)
     {
         auto func = [=]()
         {
+            // 释放对应的file对象
+            // 打开的目录后的其他操作可以直接获得对应的info，猜测fuse是通过建立文件描述符和info的关系实现的
             delete get_base_handle(info);
             return 0;
         };
@@ -382,7 +420,10 @@ namespace lite
             // 注意fp这个File对象指针里面存放很多有效信息！
             auto fp = get_handle_as_file_checked(info);
             // 进行线程保护，通过锁实现，读的时候不能进行写，阻塞写，防止出错
-            // 会利用flock库函数对文件上共享锁，多个线程可以同时读（这里说的多个线程可以是同一进程中，也可以是不同进程中，因为os调度的单位是线程，进行只是系统资源分配单位）
+            // 会利用flock库函数对文件上共享锁，多个线程可以同时读，此时与写是互斥的
+            // （这里说的多个线程可以是同一进程中，也可以是不同进程中，因为os调度的单位是线程，进行只是系统资源分配单位）
+            // 因为fuse默认操作挂载点发出的请求是多线程的，猜测这些线程都是在fuse程序中的
+            // exclusive=false，flock上共享锁
             LockGuard<File> lock_guard(*fp, false);
             // 返回读取到的字节数
             return static_cast<int>(fp->read(buf, offset, size));
@@ -420,9 +461,9 @@ namespace lite
                                        {{path}, {(const void*)buf}, {&size}, {&offset}, {info}});
     }
 
-    // 可能刷新缓存数据，通过调用File对象中的flush()实现
-    // 作用不太理解
-    // lite版本中没有实现这个功能
+    // 刷新缓存区数据到文件里(磁盘/控制台)，类似于linux系统调用中的fflush()
+    // 高级IO有缓冲区，可以使用fflush()，但是低级IO就不适用啦
+    // 低级IO需要适用fsync()，将与OS有关的raw中的数据写入磁盘
     int flush(const char* path, struct fuse_file_info* info)
     {
         auto func = [=]()
@@ -442,7 +483,8 @@ namespace lite
         {
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
-            fp->resize(len);\
+            // 通过调用File类中的resize，
+            fp->resize(len);
             return 0;
         };
         return FuseTracer::traced_call(
@@ -455,6 +497,7 @@ namespace lite
     {
         auto func = [=]()
         {
+            // 删除一个文件，因为不涉及线程安全问题，所以用Filesystem而不是File
             auto filesystem = get_local_filesystem();
             filesystem->unlink(path);
             return 0;
@@ -541,6 +584,7 @@ namespace lite
 
     /* UNIX系统下特有 */
     // 读取符号链接的目标，通过调用FileSystem对象的readlink()实现
+    // buf存的是源文件的路径，成功的话返回值为0
     int readlink(const char* path, char* buf, size_t size)
     {
         auto func = [=]()
@@ -565,12 +609,13 @@ namespace lite
         return FuseTracer::traced_call(func, FULL_FUNCTION_NAME, __LINE__, {{from}, {to}});
     }
 
-    // 将修改后的数据和文件描述符的属性持久化到存储设备中，通过File类的fsync()实现
+    // 低级IO用，将与OS有关的raw缓存输出到磁盘上，通过File类的fsync()实现
     // 若datasync非0，则只同步文件内容，而不同步元数据
     int fsync(const char* path, int datasync, struct fuse_file_info* info)
     {
         auto func = [=]()
         {
+            // 涉及
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
             fp->fsync();
@@ -610,14 +655,19 @@ namespace lite
             func, FULL_FUNCTION_NAME, __LINE__, {{path}, {ts}, {ts ? ts + 1 : ts}});
     }
 
-// apple设备才实现的fuse api
+// apple设备才实现的fuse api，即与xattr扩展属性有关的fuse操作
+// 数据目录->挂载点（解密）读取：list->get
+// 挂载点->数据目录（加密）修改、创建：list->set
+// 挂载点->数据目录（加密）删除：list->remove
 #ifdef __APPLE__
+    // 列出对应文件的第一个扩展属性
     int listxattr(const char* path, char* list, size_t size)
     {
         auto func = [=]()
         {
             auto filesystem = get_local_filesystem();
             int rc = static_cast<int>(filesystem->listxattr(path, list, size));
+            // 利用listxattr()系统调用后获得的扩展属性名称_securefs.FinderInfo替换成com.apple.FinderInfo
             transform_listxattr_result(list, size);
             return rc;
         };
@@ -625,12 +675,15 @@ namespace lite
             func, FULL_FUNCTION_NAME, __LINE__, {{path}, {(const void*)list}, {&size}});
     }
 
+    // 获取扩展属性
     int getxattr(const char* path, const char* name, char* value, size_t size, uint32_t position)
     {
         auto func = [&]()
         {
             if (position != 0)
                 return -EINVAL;
+            // 检查是否有com.apple.quarantine标志
+            // 检查是否已经由_securefs.FinderInfo替换成com.apple.FinderInfo
             int rc = precheck_getxattr(&name);
             if (rc <= 0)
                 return rc;
@@ -646,6 +699,9 @@ namespace lite
             {{path}, {name}, {(const void*)value}, {&size}, {&position}});
     }
 
+    // 设置扩展属性
+    // 注意：对不同的修改或创建的标志会多次调用
+    // 注意：挂载点的修改标签会立即发出系统调用，修改注释需要当打开文件时发出系统调用
     int setxattr(const char* path,
                  const char* name,
                  const char* value,
@@ -657,6 +713,7 @@ namespace lite
         {
             if (position != 0)
                 return -EINVAL;
+            // 将包含的com.apple.FinderInfo标志替换成_securefs.FinderInfo
             int rc = precheck_setxattr(&name, &flags);
             if (rc <= 0)
                 return rc;
@@ -673,6 +730,8 @@ namespace lite
             __LINE__,
             {{path}, {name}, {(const void*)value}, {&size}, {&flags}, {&position}});
     }
+
+    // 移除扩展属性
     int removexattr(const char* path, const char* name)
     {
         auto func = [&]()
@@ -691,9 +750,10 @@ namespace lite
     // init_fuse_operations函数的作用是初始化fuse_operation，这里用的是high_level
     void init_fuse_operations(struct fuse_operations* opt, bool xattr)
     {
-        // 将opt对象在内存中置0
+        // 将 fuse_operations对象在内存中置0
         memset(opt, 0, sizeof(*opt));
-        
+
+        // 查看fuse.h中的定义，可以知道下列变量的作用
         // 对于读写等操作不需要计算路径
         opt->flag_nopath = true;
         // 对于读写等操作可以接受空path
