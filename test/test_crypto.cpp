@@ -6,6 +6,9 @@
 
 #include <vector>
 
+// 测试AES_SIV算法加密结果是否正确
+// 用static修饰的函数，限定在本源码文件中，不能被本源码文件以外的代码文件调用。
+// 静态局部变量保存在全局数据区，而不是保存在栈中，每次的值保持到下一次调用，直到下次赋新值。
 static void test_siv_encryption(const void* key,
                                 size_t key_len,
                                 const void* header,
@@ -24,6 +27,7 @@ static void test_siv_encryption(const void* key,
     REQUIRE(memcmp(ciphertext, our_ciphertext.data(), text_len) == 0);
 }
 
+// 测试AES_SIV算法解密结果是否正确
 static void test_siv_decryption(const void* key,
                                 size_t key_len,
                                 const void* header,
@@ -40,6 +44,7 @@ static void test_siv_decryption(const void* key,
     REQUIRE(memcmp(our_plaintext.data(), plaintext, text_len) == 0);
 }
 
+// 调用AES_SIV算法的测试加密和解密函数
 static void test_siv_all(const void* key,
                          size_t key_len,
                          const void* header,
@@ -53,6 +58,7 @@ static void test_siv_all(const void* key,
     test_siv_decryption(key, key_len, header, header_len, plaintext, ciphertext, text_len, siv);
 }
 
+// AES SIV的测试用例
 TEST_CASE("Test SIV RFC")
 {
     const byte key[] = {0xff, 0xfe, 0xfd, 0xfc, 0xfb, 0xfa, 0xf9, 0xf8, 0xf7, 0xf6, 0xf5,
@@ -128,6 +134,7 @@ TEST_CASE("Test SIV NIST")
                  siv1_iv);
 }
 
+// 测试Cryptopp中AES-CTR Mode
 TEST_CASE("Test CTR")
 {
     const byte ciphertext[]
@@ -221,6 +228,7 @@ TEST_CASE("Test SIV other")
                  siv2_iv);
 }
 
+// 测试文件名加密/解密用例
 TEST_CASE("Test filename enc/dec")
 {
     const byte key[64]
@@ -241,6 +249,7 @@ TEST_CASE("Test filename enc/dec")
     REQUIRE(securefs::lite::decrypt_path(aes_siv, enc2) == path2);
 }
 
+// 测试hkdf用例
 TEST_CASE("Test hkdf")
 {
     const byte key[] = {0x1d,
@@ -296,6 +305,7 @@ TEST_CASE("Test hkdf")
     REQUIRE(memcmp(test_derived, true_derived_key, sizeof(test_derived)) == 0);
 }
 
+// 测试scrypt
 static void test_scrypt(const char* password,
                         const char* salt,
                         uint64_t N,
@@ -320,6 +330,7 @@ static void test_scrypt(const char* password,
     CHECK(memcmp(expected, output.data(), dkLen) == 0);
 }
 
+// 测试scrypt用例
 TEST_CASE("scrypt")
 {
     test_scrypt("",

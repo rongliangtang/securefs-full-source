@@ -180,6 +180,7 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_FOUND)
     add_test(
         NAME simple_test
+            # 将目标二进制可执行文件的路径放到了SECUREFS_BINARY环境变量中
         COMMAND ${CMAKE_COMMAND} -E env SECUREFS_BINARY=$<TARGET_FILE:securefs>
                 ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/test/simple_test.py)
 endif()

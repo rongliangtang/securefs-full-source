@@ -25,13 +25,20 @@ import random
 import io
 from collections import namedtuple
 
+# faulthandler可以转储程序的跟踪信息
+# https://docs.python.org/zh-cn/3/library/faulthandler.html
+# 启用故障处理程序
 faulthandler.enable()
 
-
+# 取出SECUREFS_BINARY环境变量
+# SECUREFS_BINARY环境变量在cmakelists.txt中进行了设置
 SECUREFS_BINARY = os.environ["SECUREFS_BINARY"]
+# 如果SECUREFS_BINARY不是文件，则抛出异常
 if not os.path.isfile(SECUREFS_BINARY):
     raise ValueError(f"{repr(SECUREFS_BINARY)} is not a file!")
 
+# 如果os为macos，则引入xattr库
+# https://docs.python.org/zh-cn/3/library/sys.html
 if sys.platform == "darwin":
     try:
         import xattr
@@ -43,9 +50,10 @@ if sys.platform == "darwin":
 else:
     xattr = None
 
-
+# 如果os为win，需要利用ctype来实现ismount(path)和statvfs(path)
 if sys.platform == "win32":
 
+    # 如果路径 path 是 挂载点 （文件系统中挂载其他文件系统的点），则返回 True
     def ismount(path):
         # Not all reparse points are mounts, but in our test, that is close enough
         attribute = ctypes.windll.kernel32.GetFileAttributesW(path.rstrip("/\\"))
@@ -56,10 +64,12 @@ if sys.platform == "win32":
             raise ctypes.WinError()
 
 else:
+    # https://docs.python.org/zh-cn/3/library/os.path.html#os.path.ismount
     ismount = os.path.ismount
+    # 返回包含文件的文件系统的信息
     statvfs = os.statvfs
 
-
+# 实现securefs的mount（利用subprocess.Popen()实现）
 def securefs_mount(
     data_dir: str,
     mount_point: str,
@@ -108,7 +118,7 @@ def securefs_mount(
         p.kill()
         raise
 
-
+# 实现退出挂载功能（利用subprocess.Popen()返回的对象实现）
 def securefs_unmount(p: subprocess.Popen, mount_point: str):
     statvfs(mount_point)
     with p:
@@ -124,7 +134,7 @@ def securefs_unmount(p: subprocess.Popen, mount_point: str):
         if ismount(mount_point):
             raise RuntimeError(f"{mount_point} still mounted")
 
-
+# 实现securefs的create（利用subprocess.check_call()实现）
 def securefs_create(
     data_dir: str,
     version: int,
@@ -155,7 +165,7 @@ def securefs_create(
     logging.info("Creating securefs repo with command %s", command)
     subprocess.check_call(command)
 
-
+# 实现securefs的chpass（利用subprocess.check_call()实现）
 def securefs_chpass(
     data_dir,
     pbkdf: str,
@@ -207,19 +217,19 @@ def securefs_chpass(
         if p.returncode:
             raise subprocess.CalledProcessError(p.returncode, args, out, err)
 
-
+# 创建一个临时数据目录（利用tempfile库实现）
 def get_data_dir(format_version=4):
     return tempfile.mkdtemp(
         prefix=f"securefs.format{format_version}.data_dir", dir="tmp"
     )
 
-
+# 创建一个临时挂载点目录
 def get_mount_point():
     result = tempfile.mkdtemp(prefix=f"securefs.mount_point", dir="tmp")
     os.rmdir(result)
     return result
 
-
+# 密码输入模式的枚举类
 @enum.unique
 class SecretInputMode(enum.IntEnum):
     PASSWORD = 0b1
@@ -228,7 +238,9 @@ class SecretInputMode(enum.IntEnum):
     KEYFILE2 = KEYFILE | 0b1000
     PASSWORD_WITH_KEYFILE2 = PASSWORD | KEYFILE2
 
-
+# 实现将迭代器中的每个取出，去执行
+# 这个函数将用来做装饰器
+# https://www.runoob.com/w3cnote/python-func-decorators.html
 def parametrize(possible_args: Sequence[Sequence]):
     def real_parametrize(func):
         sig = inspect.signature(func)
@@ -254,7 +266,7 @@ def parametrize(possible_args: Sequence[Sequence]):
 
 ALL_PBKDFS = ("scrypt", "pkcs5-pbkdf2-hmac-sha256", "argon2id")
 
-
+# 装饰器让你在一个函数的前后去执行代码。
 @parametrize(
     tuple(
         itertools.product(
@@ -269,7 +281,10 @@ ALL_PBKDFS = ("scrypt", "pkcs5-pbkdf2-hmac-sha256", "argon2id")
         )
     )
 )
+# 测试用例函数
 def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding: int):
+
+    # 简单的测试基类，继承unittest.TestCase
     class SimpleSecureFSTestBase(unittest.TestCase):
         data_dir: str
         password: Optional[str]
@@ -277,6 +292,8 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
         mount_point: str
         securefs_process: Optional[subprocess.Popen]
 
+        # 启动类（mount）
+        # classmethod 修饰符对应的函数不需要实例化，不需要 self 参数，但第一个参数需要是表示自身类的 cls 参数，可以来调用类的属性，类的方法，实例化对象等。
         @classmethod
         def setUpClass(cls):
             os.makedirs("tmp", exist_ok=True)
@@ -294,10 +311,12 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
             )
             cls.mount()
 
+        # 清除类（unmount）
         @classmethod
         def tearDownClass(cls):
             cls.unmount()
 
+        # 实现mount
         @classmethod
         def mount(cls):
             cls.securefs_process = securefs_mount(
@@ -307,6 +326,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                 keyfile=cls.keyfile,
             )
 
+        # 实现unmount
         @classmethod
         def unmount(cls):
             if cls.securefs_process is None:
@@ -314,6 +334,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
             securefs_unmount(cls.securefs_process, cls.mount_point)
             cls.securefs_process = None
 
+        # 测试长文件名（assertEqual()实现单元测试判断正误）
         def test_long_name(self):
             with self.assertRaises(EnvironmentError) as context:
                 os.mkdir(os.path.join(self.mount_point, "k" * 256))
@@ -321,6 +342,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
             if sys.platform != "win32":
                 self.assertEqual(context.exception.errno, errno.ENAMETOOLONG)
 
+        # 如果是macos则进行xattr测试
         if xattr is not None:
 
             def test_xattr(self):
@@ -343,6 +365,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                     except EnvironmentError:
                         pass
 
+        # 如果version不为4且os不是win，测试硬链接功能
         if version < 4 and sys.platform != "win32":
 
             def test_hardlink(self):
@@ -374,6 +397,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                     except EnvironmentError:
                         pass
 
+        # 如果os不是win，测试符号链接
         if sys.platform != "win32":
 
             def test_symlink(self):
@@ -400,13 +424,14 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                         pass
 
         else:
-
+        # 如果os是win，测试长路径
             def test_win_long_path(self):
                 long_mount_point = rf"\\?\{os.path.abspath(self.mount_point)}"
                 long_dir = os.path.join(long_mount_point, *(["🐋🐳" * 10] * 40))
                 os.makedirs(long_dir)
                 shutil.rmtree(os.path.join(long_mount_point, "🐋🐳" * 10))
 
+        # 测试重命名（在挂载点利用os库进行操作，然后对比重命名前后的ino和size）
         def test_rename(self):
             data = os.urandom(32)
             source = os.path.join(self.mount_point, str(uuid.uuid4()))
@@ -431,7 +456,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                     os.remove(dest)
                 except EnvironmentError:
                     pass
-
+        # 测试重命名目录
         def test_rename_dir(self):
             a = str(uuid.uuid4())
             b = str(uuid.uuid4())
@@ -455,6 +480,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                     pass
                 os.chdir(cwd)
 
+        # 测试读、写、创建目录、列出目录和删除
         def test_read_write_mkdir_listdir_remove(self):
             dir_names = set(str(i) for i in range(3))
             random_data = os.urandom(11111)
@@ -504,8 +530,8 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
                 except EnvironmentError:
                     pass
 
+        # 如果version为3，测试时间戳功能
         if version == 3:
-
             def test_time(self):
                 rand_dirname = os.path.join(self.mount_point, str(uuid.uuid4()))
                 os.mkdir(rand_dirname)
@@ -527,7 +553,7 @@ def make_test_case(version: int, pbkdf: str, mode: SecretInputMode, max_padding:
 
     return SimpleSecureFSTestBase
 
-
+# 将reference文件夹的数据拷贝出来，并将路径存到reference_data_dir变量中
 reference_data_dir = shutil.copytree(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "reference"),
     f"tmp/{uuid.uuid4()}",
@@ -537,6 +563,7 @@ reference_data_dir = shutil.copytree(
 @parametrize(
     tuple(itertools.product(range(1, 5), ALL_PBKDFS, SecretInputMode, [False, True]))
 )
+# 回退测试（测试新版本的securefs能否读取老版本的securefs）
 def make_regression_test(version: int, pbkdf: str, mode: SecretInputMode, padded: bool):
     class RegressionTestBase(unittest.TestCase):
         """
@@ -562,12 +589,14 @@ def make_regression_test(version: int, pbkdf: str, mode: SecretInputMode, padded
                 config_filename=config_filename,
             )
             try:
+                # 对比reference/plain目录和挂载点中内容是否一样
                 self.compare_directory(
                     os.path.join(reference_data_dir, "plain"), mount_point
                 )
             finally:
                 securefs_unmount(p, mount_point)
 
+        # 比较两个目录里面的内容是否一样
         def compare_directory(self, dir1, dir2):
             listing1 = list_dir_recursive(dir1, relpath=True)
             listing2 = list_dir_recursive(dir2, relpath=True)
@@ -593,7 +622,8 @@ def make_regression_test(version: int, pbkdf: str, mode: SecretInputMode, padded
 
     return RegressionTestBase
 
-
+# 列出目录中目录项
+# 函数名后->，表示返回值建议类型
 def list_dir_recursive(dirname: str, relpath=False) -> Set[str]:
     # Note: os.walk does not work on Windows when crossing filesystem boundary.
     # So we use this crude version instead.
@@ -610,16 +640,18 @@ def list_dir_recursive(dirname: str, relpath=False) -> Set[str]:
         return set(os.path.relpath(f, dirname) for f in result)
     return result
 
-
+# 生成暂时keyfile文件
 def generate_keyfile():
     with tempfile.NamedTemporaryFile(
         dir="tmp", mode="wb", delete=False, prefix="key"
     ) as f:
+        # 写入随机数
         f.write(os.urandom(9))
         return f.name
 
 
 @parametrize([[1], [2], [3], [4]])
+# 测试padded功能
 def make_size_test(version):
     """Ensures that padding actually increases the underlying file sizes."""
 
@@ -643,7 +675,7 @@ def make_size_test(version):
 
 FileStatistics = namedtuple("FileStatistics", ("total_size", "count"))
 
-
+# 计算文件数量和总大小
 def compute_file_statistics(
     base_dir: str, exclude_securefs_json: bool
 ) -> FileStatistics:
@@ -682,6 +714,7 @@ def compute_file_statistics(
         )
     )
 )
+# chpass测试
 def make_chpass_test(
     old_pass, new_pass, old_keyfile, new_keyfile, use_stdin, version, pbkdf, max_padding
 ):
@@ -739,7 +772,7 @@ def make_chpass_test(
 
     return ChpassTestBase
 
-
+# 随机对文件进行操作
 def randomly_act_on_file(filename: str, barrier) -> None:
     rng = random.Random(os.urandom(16))
 
@@ -763,8 +796,9 @@ def randomly_act_on_file(filename: str, barrier) -> None:
             for _ in range(rng.randrange(10, 30)):
                 run_once(f)
 
-
 @parametrize([[2], [4]])
+# 并发测试（多个进程同时对文件进行操作）
+# 这里没有进行单元测试结果判断，通过线程读写文件失败异常退出来判断并发结果。
 def make_concurrency_test(version: int):
     class ConcurrencyTestBase(unittest.TestCase):
         def test_concurrent_access(self):
