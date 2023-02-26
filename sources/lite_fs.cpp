@@ -35,7 +35,7 @@ namespace lite
                            unsigned flags)
         : m_name_encryptor(name_key.data(), name_key.size())
         , m_content_key(content_key)
-        , m_padding_aes(padding_key.data(), padding_key.size())
+        //, m_padding_aes(padding_key.data(), padding_key.size())
         , m_root(std::move(root))
         , m_block_size(block_size)
         , m_iv_size(iv_size)
@@ -45,6 +45,8 @@ namespace lite
         byte null_iv[12] = {0};
         m_xattr_enc.SetKeyWithIV(xattr_key.data(), xattr_key.size(), null_iv, sizeof(null_iv));
         m_xattr_dec.SetKeyWithIV(xattr_key.data(), xattr_key.size(), null_iv, sizeof(null_iv));
+
+        m_padding_aes.SetKey(padding_key.data(), padding_key.size());
     }
 
     FileSystem::~FileSystem() {}

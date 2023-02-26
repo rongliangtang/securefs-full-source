@@ -8,6 +8,7 @@
 #include <cryptopp/pwdbased.h>
 #include <cryptopp/rng.h>
 #include <cryptopp/sha.h>
+#include <cryptopp/sm3.h>
 
 /*这个文件放了利用cryptopp实现的一些方法*/
 
@@ -62,9 +63,12 @@ static void aes256_siv_dbl(byte* block)
 }
 
 // 又一个key来初始化m_cmac和m_ctr
+// TODO: 将KEY_LENGTH从32改为16后，key_type的size为16，而cmac_sm4和ctr_sm4的密钥要求为16，这里暂时令它们使用同样的密钥而不对半分
 AES_SIV::AES_SIV(const void* key, size_t size)
-    : m_cmac(static_cast<const byte*>(key), size / 2)
-    , m_ctr(static_cast<const byte*>(key) + size / 2, size / 2, aes256_siv_zero_block)
+//    : m_cmac(static_cast<const byte*>(key), size / 2)
+//    , m_ctr(static_cast<const byte*>(key) + size / 2, size / 2, aes256_siv_zero_block)
+    : m_cmac(static_cast<const byte*>(key), size)
+    , m_ctr(static_cast<const byte*>(key), size, aes256_siv_zero_block)
 {
 }
 
@@ -182,6 +186,7 @@ bool hmac_sha256_verify(const void* message,
     return hmac.TruncatedVerify(static_cast<const byte*>(mac), mac_len);
 }
 
+// crypto++官方不建议使用这个早期的KDF，建议使用HKDF
 unsigned int pbkdf_hmac_sha256(const void* password,
                                size_t pass_len,
                                const void* salt,
@@ -201,6 +206,27 @@ unsigned int pbkdf_hmac_sha256(const void* password,
                          salt_len,
                          min_iterations,
                          min_seconds);
+}
+
+// 利用crypto++中提供的HKDF来实现KDF，将sha哈希算法换为SM3
+unsigned int hkdf_with_sm3(const void* password,
+                               size_t pass_len,
+                               const void* salt,
+                               size_t salt_len,
+                               void* derived,
+                               size_t derive_len)
+{
+    CryptoPP::HKDF<CryptoPP::SM3> kdf;
+    // 暂时把info写死
+    byte *info = (byte*)"hkdf_with_sm3";
+    return kdf.DeriveKey(static_cast<byte*>(derived),
+                         derive_len,
+                         static_cast<const byte*>(password),
+                         pass_len,
+                         static_cast<const byte*>(salt),
+                         salt_len,
+                         info,
+                         13);
 }
 
 static void hkdf_expand(const void* distilled_key,

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cryptopp/aes.h>
+#include <cryptopp/sm4.h>
 #include <cryptopp/cmac.h>
 #include <cryptopp/modes.h>
 
@@ -15,8 +16,11 @@ namespace securefs
 class AES_SIV
 {
 private:
-    CryptoPP::CMAC<CryptoPP::AES> m_cmac;
-    CryptoPP::CTR_Mode<CryptoPP::AES>::Encryption m_ctr;
+    // 在这里直接将AES改为SM4可以正确运行，key为32byte，不需要改为16byte
+    // 答上：因为32byte的key，划分为了两半，分别作为下面两个算法的密钥
+    // TODO: 待了解AES_SIV的原理，和Cryptopp泛型模版的实现原理
+    CryptoPP::CMAC<CryptoPP::SM4> m_cmac;
+    CryptoPP::CTR_Mode<CryptoPP::SM4>::Encryption m_ctr;
 
 public:
     static constexpr size_t IV_SIZE = 16;
@@ -81,6 +85,13 @@ unsigned int pbkdf_hmac_sha256(const void* password,
                                double min_seconds,
                                void* derived,
                                size_t derive_len);
+
+unsigned int hkdf_with_sm3(const void* password,
+                           size_t pass_len,
+                           const void* salt,
+                           size_t salt_len,
+                           void* derived,
+                           size_t derive_len);
 
 void generate_random(void* buffer, size_t size);
 }    // namespace securefs

@@ -15,7 +15,7 @@ namespace lite
     {
         const offset_type MAX_BLOCKS = (1ULL << 31) - 1;
         unsigned compute_padding(unsigned max_padding,
-                                 CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption* padding_aes,
+                                 CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption* padding_aes,
                                  const byte* id,
                                  size_t id_size)
         {
@@ -25,6 +25,8 @@ namespace lite
             }
             CryptoPP::FixedSizeAlignedSecBlock<byte, 16> transformed;
             padding_aes->ProcessData(transformed.data(), id, id_size);
+            // 将ID用padding_key加密后得到的密文，用CryptoPP::Integer类表示为整数，然后与max_padding + 1取模
+            // 因为使用的是ECB模式，所以在明文ID和密钥相同的情况下密文也是一样的，这样能保证一个文件的padding_size是固定的
             CryptoPP::Integer integer(transformed.data(),
                                       transformed.size(),
                                       CryptoPP::Integer::UNSIGNED,
@@ -49,7 +51,7 @@ namespace lite
                                          unsigned iv_size,
                                          bool check,
                                          unsigned max_padding_size,
-                                         CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption* padding_aes)
+                                         CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption* padding_aes)
         : BlockBasedStream(block_size)
         , m_stream(std::move(stream))
         , m_iv_size(iv_size)
@@ -68,12 +70,13 @@ namespace lite
         // get_id_size(){ return 16; }
         CryptoPP::FixedSizeAlignedSecBlock<byte, get_id_size()> id, session_key;
         // id.data()从m_stream文件加密数据流中读取
-        // rc为从m_stream读取的id.size()个字节数据？？
+        // rc为从m_stream读取的id.size()个字节数据
         // m_stream实际为StreamBase多态的UnixSteamFile类型
         // 调用UnixFileStream中的read()
         auto rc = m_stream->read(id.data(), 0, id.size());
-        // 当rc为0的时候，随机生成并写入到m_stream文件加密流中
-        // 没有打开过的明文文件，会走这一步
+        // 当rc为0的时候，说明是创建文件，需要随机生成id
+        // 并根据是否开启padding功能，随机生成m_padding_size大小的数据放入到m_auxiliary并写入文件
+        // m_auxiliary（块号+padding数据）在文件内容加密解密会作为辅助消息用到
         if (rc == 0)
         {
             // 随机生成id.data()
@@ -110,7 +113,11 @@ namespace lite
         }
 
         // master_key实际为m_content_key，这里设置为AES-ECB的共享密钥
-        CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption ecenc(master_key.data(), master_key.size());
+        // master_key大小为32，取出我们放入的16byte，作为m_content_key,即16byte
+        // key_type的size改为16了
+        CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption ecenc(master_key.data(), master_key.size());
+
+//        CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption ecenc(master_key.data(), master_key.size());
         // ProcessData(byte *outString, const byte *inString, size_t length)
         // session_key.data()为id.data()加密后的结果
         ecenc.ProcessData(session_key.data(), id.data(), id.size());

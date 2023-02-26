@@ -14,6 +14,7 @@
 #include <cryptopp/osrng.h>
 #include <cryptopp/scrypt.h>
 #include <cryptopp/secblock.h>
+#include <cryptopp/sm3.h>
 #include <fuse.h>
 #include <json/json.h>
 #include <tclap/CmdLine.h>
@@ -46,11 +47,13 @@ const char* const CONFIG_FILE_NAME = ".securefs.json";
 const unsigned MIN_ITERATIONS = 20000;
 const unsigned MIN_DERIVE_SECONDS = 1;
 // size_t（size_type）可以提高代码的可移植性、有效性、可读性，表示取值范围是目标平台下最大的可能范围。不同位数的os上定义不一样，但都为无符号整数。
+// 加密master_key用
 const size_t CONFIG_IV_LENGTH = 32, CONFIG_MAC_LENGTH = 16;
 
 const char* const PBKDF_ALGO_PKCS5 = "pkcs5-pbkdf2-hmac-sha256";
 const char* const PBKDF_ALGO_SCRYPT = "scrypt";
 const char* const PBKDF_ALGO_ARGON2ID = "argon2id";
+const char* const HKDF_WITH_SM3 = "hkdf-with-sm3";
 
 const char* const EMPTY_PASSWORD_WHEN_KEY_FILE_IS_USED = " ";
 
@@ -317,6 +320,35 @@ void hmac_sha256(const securefs::key_type& base_key,
     hmac.TruncatedFinal(out_key.data(), out_key.size());
 }
 
+// 利用sm3实现hmac，用于key_file功能
+void hmac_sm3(const securefs::key_type& base_key,
+                 StringRef maybe_key_file_path,
+                 securefs::key_type& out_key)
+{
+    // 如果没有用keyfile文件，则salt_effective = salt
+    if (maybe_key_file_path.empty())
+    {
+        out_key = base_key;
+        return;
+    }
+    // 如果用了keyfile文件，会利用keyfile文件里面的信息和hmac-sha256算法来生成salt_effective
+    auto file_stream = OSService::get_default().open_file_stream(maybe_key_file_path, O_RDONLY, 0);
+    byte buffer[4096];
+    CryptoPP::HMAC<CryptoPP::SM3> hmac(base_key.data(), base_key.size());
+    while (true)
+    {
+        auto sz = file_stream->sequential_read(buffer, sizeof(buffer));
+        if (sz <= 0)
+        {
+            break;
+        }
+        hmac.Update(buffer, sz);
+    }
+    hmac.TruncatedFinal(out_key.data(), out_key.size());
+}
+
+
+
 // 产生配置信息函数，返回JSON格式的数据
 Json::Value generate_config(unsigned int version,
                             const std::string& pbkdf_algorithm,
@@ -331,7 +363,8 @@ Json::Value generate_config(unsigned int version,
                             unsigned rounds)
 {
     securefs::key_type effective_salt;
-    hmac_sha256(salt, maybe_key_file_path, effective_salt);
+
+    hmac_sm3(salt, maybe_key_file_path, effective_salt);
 
     Json::Value config;
     config["version"] = version;
@@ -396,6 +429,16 @@ Json::Value generate_config(unsigned int version,
             throw_runtime_error("Argon2 hashing failed with status code " + std::to_string(rc));
         }
     }
+    else if (pbkdf_algorithm == HKDF_WITH_SM3)
+    {
+        hkdf_with_sm3(password,
+                      pass_len,
+                      effective_salt.data(),
+                      effective_salt.size(),
+                      password_derived_key.data(),
+                      password_derived_key.size()
+        );
+    }
     else
     {
         throw_runtime_error("Unknown pbkdf algorithm " + pbkdf_algorithm);
@@ -410,7 +453,7 @@ Json::Value generate_config(unsigned int version,
     generate_random(iv, array_length(iv));
 
     // 利用password_derived_key来加密master_key获得e_key，得到用户看得见的.securefs.json里的数据
-    CryptoPP::GCM<CryptoPP::AES>::Encryption encryptor;
+    CryptoPP::GCM<CryptoPP::SM4>::Encryption encryptor;
     encryptor.SetKeyWithIV(
         password_derived_key.data(), password_derived_key.size(), iv, array_length(iv));
     encryptor.EncryptAndAuthenticate(encrypted_master_key.data(),
@@ -432,6 +475,7 @@ Json::Value generate_config(unsigned int version,
     config["encrypted_key"] = std::move(encrypted_key);
 
     // 如果format_version!=1，则block_size和iv_size是可变的，放到json中
+    // 这里的iv_size是文件分块中每一块的iv的size
     if (version >= 2)
     {
         config["block_size"] = block_size;
@@ -445,18 +489,19 @@ Json::Value generate_config(unsigned int version,
     return config;
 }
 
+// 根据password和config来计算password_derived_key
 void compute_password_derived_key(const Json::Value& config,
                                   const void* password,
                                   size_t pass_len,
                                   key_type& salt,
                                   key_type& password_derived_key)
 {
-    unsigned iterations = config["iterations"].asUInt();
     std::string pbkdf_algorithm = config.get("pbkdf", PBKDF_ALGO_PKCS5).asString();
     VERBOSE_LOG("Setting the password key derivation function to %s", pbkdf_algorithm.c_str());
 
     if (pbkdf_algorithm == PBKDF_ALGO_PKCS5)
     {
+        unsigned iterations = config["iterations"].asUInt();
         pbkdf_hmac_sha256(password,
                           pass_len,
                           salt.data(),
@@ -468,6 +513,7 @@ void compute_password_derived_key(const Json::Value& config,
     }
     else if (pbkdf_algorithm == PBKDF_ALGO_SCRYPT)
     {
+        unsigned iterations = config["iterations"].asUInt();
         auto r = config["scrypt_r"].asUInt();
         auto p = config["scrypt_p"].asUInt();
         CryptoPP::Scrypt scrypt;
@@ -483,6 +529,7 @@ void compute_password_derived_key(const Json::Value& config,
     }
     else if (pbkdf_algorithm == PBKDF_ALGO_ARGON2ID)
     {
+        unsigned iterations = config["iterations"].asUInt();
         auto m_cost = config["argon2_m_cost"].asUInt();
         auto p = config["argon2_p"].asUInt();
         int rc = argon2id_hash_raw(iterations,
@@ -498,6 +545,16 @@ void compute_password_derived_key(const Json::Value& config,
         {
             throw_runtime_error("Argon2 hashing failed with status code " + std::to_string(rc));
         }
+    }
+    else if (pbkdf_algorithm == HKDF_WITH_SM3)
+    {
+        hkdf_with_sm3(password,
+                      pass_len,
+                      salt.data(),
+                      salt.size(),
+                      password_derived_key.data(),
+                      password_derived_key.size()
+                      );
     }
     else
     {
@@ -561,7 +618,7 @@ bool parse_config(const Json::Value& config,
     auto decrypt_and_verify = [&](const securefs::key_type& wrapping_key)
     {
         // 定义一个解密器
-        CryptoPP::GCM<CryptoPP::AES>::Decryption decryptor;
+        CryptoPP::GCM<CryptoPP::SM4>::Decryption decryptor;
         decryptor.SetKeyWithIV(wrapping_key.data(), wrapping_key.size(), iv, array_length(iv));
         // 利用解密器进行解密和验证，返回bool类型
         return decryptor.DecryptAndVerify(
@@ -584,9 +641,10 @@ bool parse_config(const Json::Value& config,
     {
         // 利用key_file获取new_salt
         securefs::key_type new_salt;
-        hmac_sha256(salt, maybe_key_file_path, new_salt);
+        hmac_sm3(salt, maybe_key_file_path, new_salt);
 
         securefs::key_type password_derived_key;
+        // 使用hmac_sm3计算获得的password_derived_key有误？
         compute_password_derived_key(config, password, pass_len, new_salt, password_derived_key);
         if (decrypt_and_verify(password_derived_key))
         {
@@ -602,7 +660,7 @@ bool parse_config(const Json::Value& config,
         securefs::key_type password_derived_key;
         compute_password_derived_key(config, password, pass_len, salt, password_derived_key);
         // 利用key_file获取new_password_derived_key
-        hmac_sha256(password_derived_key, maybe_key_file_path, wrapping_key);
+        hmac_sm3(password_derived_key, maybe_key_file_path, wrapping_key);
         return decrypt_and_verify(wrapping_key);
     }
 }
@@ -845,9 +903,9 @@ private:
         "",
         "store_time",
         "alias for \"--format 3\", enables the extension where timestamp are stored and encrypted"};
-    // pbkdf表示使用何种pbkdf算法，默认是argon2id
+    // pbkdf表示使用何种pbkdf算法，默认是argon2id（改为国密后默认为hkdf-with-sm3）
     TCLAP::ValueArg<std::string> pbkdf{
-        "", "pbkdf", message_for_setting_pbkdf, false, PBKDF_ALGO_ARGON2ID, "string"};
+        "", "pbkdf", message_for_setting_pbkdf, false, HKDF_WITH_SM3, "string"};
     // max-padding表示填充到所有文件的最大数量，每个block进行随机填充，作用是混淆文件的大小，开启这个功能会产生巨大的性能消耗
     TCLAP::ValueArg<unsigned> max_padding{
         "",
@@ -907,7 +965,7 @@ public:
 
         // 创建配置文件的结构体（master_key等数据）注意.securefs.json中存放的是master_key加密后的密文
         FSConfig config;
-        // 调整类型为CryptoPP::AlignedSecByteBlock的config.master_key的大小，format=4时为4*32字节，format<4时为32字节
+        // 调整类型为CryptoPP::AlignedSecByteBlock的config.master_key的大小，format=4时为4*KEY_LENGTH字节，format<4时为KEY_LENGTH字节
         // 每个CryptoPP::AlignedSecByteBlock类型变量中data以byte字节为单位
         config.master_key.resize(format_version < 4 ? KEY_LENGTH : 4 * KEY_LENGTH);
         // 使用CryptoPP::OS_GenerateRandomBlock函数，随机生成master_key
@@ -1000,9 +1058,9 @@ private:
         false,
         0,
         "integer"};
-    // pbkdf表示使用何种pbkdf算法，默认是argon2id
+    // pbkdf表示使用何种pbkdf算法，默认是argon2id（改为国密后默认为hkdf-with-sm3）
     TCLAP::ValueArg<std::string> pbkdf{
-        "", "pbkdf", message_for_setting_pbkdf, false, PBKDF_ALGO_ARGON2ID, "string"};
+        "", "pbkdf", message_for_setting_pbkdf, false, HKDF_WITH_SM3, "string"};
     // 旧的keyfile路径
     TCLAP::ValueArg<std::string> old_key_file{
         "", "oldkeyfile", "Path to original key file", false, "", "path"};

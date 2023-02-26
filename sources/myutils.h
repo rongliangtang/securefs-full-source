@@ -142,7 +142,8 @@ using std::experimental::optional;
 typedef uint64_t length_type;
 typedef uint64_t offset_type;
 
-constexpr uint32_t KEY_LENGTH = 32, ID_LENGTH = 32, BLOCK_SIZE = 4096;
+// 将KEY_LENGTH从32改为16，注意使用到key_type的地方
+constexpr uint32_t KEY_LENGTH = 16, ID_LENGTH = 32, BLOCK_SIZE = 4096;
 
 template <class T>
 inline std::unique_ptr<T[]> make_unique_array(size_t size)

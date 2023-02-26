@@ -53,7 +53,7 @@ namespace lite
             const auto& master_key = ctx->opt->master_key;
             // typedef PODArray<byte, KEY_LENGTH> key_type;
             key_type name_key, content_key, xattr_key, padding_key;
-            // KEY_LENGTH = 32
+            // KEY_LENGTH = 16
             // 若master_key的size不是KEY_LENGTH三倍或四倍，则报错
             if (master_key.size() != 3 * KEY_LENGTH && master_key.size() != 4 * KEY_LENGTH)
                 throwInvalidArgumentException("Master key has wrong length");
