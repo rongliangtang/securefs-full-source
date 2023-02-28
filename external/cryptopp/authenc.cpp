@@ -72,7 +72,7 @@ void AuthenticatedSymmetricCipherBase::Resynchronize(const byte *iv, int length)
 	m_bufferedDataLength = 0;
 	m_totalHeaderLength = m_totalMessageLength = m_totalFooterLength = 0;
 	m_state = State_KeySet;
-
+        // 这里实际调用当前对象中的Resync重载函数
 	Resync(iv, this->ThrowIfInvalidIVLength(length));
 	m_state = State_IVSet;
 }

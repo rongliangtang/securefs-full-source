@@ -246,11 +246,18 @@ void AuthenticatedSymmetricCipher::SpecifyDataLengths(lword headerLength, lword 
 
 void AuthenticatedSymmetricCipher::EncryptAndAuthenticate(byte *ciphertext, byte *mac, size_t macSize, const byte *iv, int ivLength, const byte *header, size_t headerLength, const byte *message, size_t messageLength)
 {
+        // 当前对象没有重载下面这些函数的话，都是调用AuthenticatedSymmetricCipherBase父类中重载的方法
+        // 父类中重载的这些方法，会用到当前对象中实现的某些纯虚函数
+
+        // 这里实际调用AuthenticatedSymmetricCipherBase::Resynchronize()
 	Resynchronize(iv, ivLength);
 	SpecifyDataLengths(headerLength, messageLength);
-	Update(header, headerLength);
-	ProcessString(ciphertext, message, messageLength);
-	TruncatedFinal(mac, macSize);
+	// 这里实际调用AuthenticatedSymmetricCipherBase::Update()
+        Update(header, headerLength);
+	// 这里实际调用AuthenticatedSymmetricCipherBase::ProcessData()
+        ProcessString(ciphertext, message, messageLength);
+	// 这里实际调用AuthenticatedSymmetricCipherBase::TruncatedFinal()
+        TruncatedFinal(mac, macSize);
 }
 
 bool AuthenticatedSymmetricCipher::DecryptAndVerify(byte *message, const byte *mac, size_t macLength, const byte *iv, int ivLength, const byte *header, size_t headerLength, const byte *ciphertext, size_t ciphertextLength)

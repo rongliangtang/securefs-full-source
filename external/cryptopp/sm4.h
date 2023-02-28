@@ -36,6 +36,9 @@ struct SM4_Info : public FixedBlockSize<16>, FixedKeyLength<16>
     }
 };
 
+//SM4算法是一个分组算法，分组长度为128比特，密钥长度为128比特。
+//SM4算法的加密算法和密钥扩展算法都采用了32轮非线性迭代结构。
+//SM4算法的解密算法和加密算法的结构相同，除了轮密钥的使用顺序是加密轮密钥的逆序。
 /// \brief Classes for the SM4 block cipher
 /// \details SM4 is a block cipher designed by Xiaoyun Wang, et al. The block cipher is part of the
 ///   Chinese State Cryptography Administration portfolio. The cipher was formely known as SMS4.

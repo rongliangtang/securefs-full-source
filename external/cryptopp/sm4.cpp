@@ -22,6 +22,7 @@ using CryptoPP::word32;
 using CryptoPP::rotlConstant;
 
 CRYPTOPP_ALIGN_DATA(4)
+// S盒
 const byte S[256] =
 {
     0xD6, 0x90, 0xE9, 0xFE, 0xCC, 0xE1, 0x3D, 0xB7, 0x16, 0xB6, 0x14, 0xC2, 0x28, 0xFB, 0x2C, 0x05,
@@ -42,6 +43,7 @@ const byte S[256] =
     0x18, 0xF0, 0x7D, 0xEC, 0x3A, 0xDC, 0x4D, 0x20, 0x79, 0xEE, 0x5F, 0x3E, 0xD7, 0xCB, 0x39, 0x48
 };
 
+// 密钥扩展用
 const word32 CK[32] =
 {
     0x00070E15, 0x1C232A31, 0x383F464D, 0x545B6269,
@@ -54,23 +56,27 @@ const word32 CK[32] =
     0x10171E25, 0x2C333A41, 0x484F565D, 0x646B7279
 };
 
+//非线性变换t函数实现
 inline word32 SM4_H(word32 x)
 {
     return (S[GETBYTE(x, 3)] << 24) | (S[GETBYTE(x, 2)] << 16) | (S[GETBYTE(x, 1)] << 8) | (S[GETBYTE(x, 0)]);
 }
 
+//线性变换L'函数实现
 inline word32 SM4_G(word32 x)
 {
     const word32 t = SM4_H(x);
     return t ^ rotlConstant<13>(t) ^ rotlConstant<23>(t);
 }
 
+//线性变换L函数实现
 inline word32 SM4_F(word32 x)
 {
     const word32 t = SM4_H(x);
     return t ^ rotlConstant<2>(t) ^ rotlConstant<10>(t) ^ rotlConstant<18>(t) ^ rotlConstant<24>(t);
 }
 
+// 每轮计算
 template <unsigned int R, bool FWD>
 inline void SM4_Round(word32 wspace[4], const word32 rkeys[32])
 {
@@ -110,6 +116,8 @@ std::string SM4::Enc::AlgorithmProvider() const
     return "C++";
 }
 
+// 进行32轮的密钥扩展（将每轮处理后的密钥存在m_rkeys[i]中）
+// https://blog.csdn.net/nicai_hualuo/article/details/121626931
 void SM4::Base::UncheckedSetKey(const byte *userKey, unsigned int keyLength, const NameValuePairs &params)
 {
     CRYPTOPP_ASSERT(keyLength == 16);
@@ -133,12 +141,14 @@ void SM4::Base::UncheckedSetKey(const byte *userKey, unsigned int keyLength, con
     while (i < 32);
 }
 
+// 加密
 void SM4::Enc::ProcessAndXorBlock(const byte *inBlock, const byte *xorBlock, byte *outBlock) const
 {
     // Reverse bytes on LittleEndian; align pointer on BigEndian
     typedef GetBlock<word32, BigEndian, false> InBlock;
     InBlock iblk(inBlock); iblk(m_wspace[0])(m_wspace[1])(m_wspace[2])(m_wspace[3]);
 
+    // cpu的cache行大小？？这里有啥用
     // Timing attack countermeasure, see comments in Rijndael for more details.
     // The hardening does not materially affect benchmarks. SM4 runs at
     // 30.5 cpb on a Core i5 Skylake with and without the code below.
@@ -164,6 +174,7 @@ void SM4::Enc::ProcessAndXorBlock(const byte *inBlock, const byte *xorBlock, byt
     OutBlock oblk(xorBlock, outBlock); oblk(m_wspace[3])(m_wspace[2])(m_wspace[1])(m_wspace[0]);
 }
 
+// 解密
 void SM4::Dec::ProcessAndXorBlock(const byte *inBlock, const byte *xorBlock, byte *outBlock) const
 {
     // Reverse bytes on LittleEndian; align pointer on BigEndian
@@ -195,6 +206,8 @@ void SM4::Dec::ProcessAndXorBlock(const byte *inBlock, const byte *xorBlock, byt
     OutBlock oblk(xorBlock, outBlock); oblk(m_wspace[3])(m_wspace[2])(m_wspace[1])(m_wspace[0]);
 }
 
+// SM4加密在支持AES-NI的机器上加速。解密没有加速，因为它没用。
+// https://zh.wikipedia.org/zh-hans/AES%E6%8C%87%E4%BB%A4%E9%9B%86
 #if CRYPTOPP_SM4_ADVANCED_PROCESS_BLOCKS
 size_t SM4::Enc::AdvancedProcessBlocks(const byte *inBlocks, const byte *xorBlocks,
         byte *outBlocks, size_t length, word32 flags) const
