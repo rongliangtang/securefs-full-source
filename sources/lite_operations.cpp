@@ -160,7 +160,7 @@ namespace lite
     // TODO:为什么要用一个结构体做中介
     void* init(struct fuse_conn_info* fsinfo)
     {
-// 如果用的是WINFSP
+// 如果文件系統支持加强讀取目錄，在capable置相應標志位
 #ifdef FSP_FUSE_CAP_READDIR_PLUS
         fsinfo->want |= (fsinfo->capable & FSP_FUSE_CAP_READDIR_PLUS);
 #endif
@@ -248,11 +248,11 @@ namespace lite
                 // LockGuard模版类定义的对象在创建的时候会上锁，销毁的时候释放
                 LockGuard<File> lock_guard(*file, false);
                 // 如果是文件，则调用File类的fstat()函数
-                // 因为打开的文件涉及线程安全问题，所以需要用File类
+                // 因为打开的文件涉及线程安全问题，所以需要用File类中的方法
                 file->fstat(st);
                 return 0;
             }
-            // 如果是Directory多态，调用Directory子类中的as_file()函数，返回Directory类型指针
+            // 如果是Directory多态，调用Directory子类中的as_dir()函数，返回Directory类型指针
             // 否则返回nullptr
             auto dir = base->as_dir();
             if (dir)
@@ -462,6 +462,7 @@ namespace lite
     }
 
     // 刷新缓存区数据到文件里(磁盘/控制台)，类似于linux系统调用中的fflush()
+    // 这个方法在close和release后会调用
     // 高级IO有缓冲区，可以使用fflush()，但是低级IO就不适用啦
     // 低级IO需要适用fsync()，将与OS有关的raw中的数据写入磁盘
     int flush(const char* path, struct fuse_file_info* info)
@@ -470,6 +471,7 @@ namespace lite
         {
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
+            // unix和win都没有实现这个函数，这个系统调用不重写是不影响数据从缓存写入磁盘的，后面应该有方法让其写回的
             fp->flush();
             return 0;
         };
@@ -483,7 +485,7 @@ namespace lite
         {
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
-            // 通过调用File类中的resize，
+            // 通过调用File类中的resize，明文进行截断后密文要进行相应的截断
             fp->resize(len);
             return 0;
         };
@@ -615,7 +617,6 @@ namespace lite
     {
         auto func = [=]()
         {
-            // 涉及
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
             fp->fsync();

@@ -195,7 +195,7 @@ namespace lite
         CryptoPP::GCM<CryptoPP::SM4>::Encryption m_xattr_enc;
         // xattr的解密器，用AES-GCM算法
         CryptoPP::GCM<CryptoPP::SM4>::Decryption m_xattr_dec;
-        // TODO:padding加密器，用AES-ECB算法，什么作用？
+        // padding加密器，用AES-ECB算法，加密padding數據
         CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption m_padding_aes;
         // m_root为可以执行OSService类的shared_ptr
         std::shared_ptr<const securefs::OSService> m_root;

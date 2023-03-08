@@ -550,7 +550,7 @@ namespace lite
             throwVFSException(EINVAL);
         return securefs::make_unique<LiteDirectory>(
             path.to_string(),
-            // 创建遍历数据目录的DirectoryTraverser对象，实际为UnixDirectoryTraverser多态
+            // 创建遍历数据目录的DirectoryTraverser对象，实际为OS類創建的UnixDirectoryTraverser多态或WindowsDirectoryTraverser多態
             m_root->create_traverser(translate_path(path, false)),
             this->m_name_encryptor,
             m_block_size,
