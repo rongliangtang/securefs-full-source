@@ -458,6 +458,12 @@ public:
 // 根據句柄獲取文件屬性，stat函數會用到
 static void stat_file_handle(HANDLE hd, struct fuse_stat* st)
 {
+    // 如果传入的句柄非法，则直接返回不执行后续代码
+    // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+    // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+    if (hd == INVALID_HANDLE_VALUE)
+        return ;
+
     memset(st, 0, sizeof(*st));
     BY_HANDLE_FILE_INFORMATION info;
     CHECK_CALL(GetFileInformationByHandle(hd, &info));
@@ -488,6 +494,12 @@ private:
     // 写数据（每次写的数据长度最多32位）
     void write32(const void* input, offset_type offset, DWORD length)
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return ;
+
         // ol表示offset，用两个dword表示64位
         OVERLAPPED ol;
         memset(&ol, 0, sizeof(ol));
@@ -513,6 +525,12 @@ private:
     // 读数据（每次读取的数据长度最多32位）
     length_type read32(void* output, offset_type offset, DWORD length)
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return 0;
+
         // ol表示offset，用两个dword表示64位
         OVERLAPPED ol;
         memset(&ol, 0, sizeof(ol));
@@ -598,6 +616,13 @@ public:
         if (m_handle == INVALID_HANDLE_VALUE)
         {
             DWORD err = GetLastError();
+            // create->lock->read->write->stat
+            // 多个系统调用会执行，throw会中断后续系统调用的执行（猜测是这些调用在一份fuse代码里，中间抛出异常，后面当然不执行）
+            // 不用throw的话，需要防止上述系统调用去执行，看TODO
+            if (err == ERROR_FILE_EXISTS)
+                //throw WindowsException(err, L"这个异常不用理会");
+                return ;
+
             throw WindowsException(err, L"CreateFileW", path.to_string());
         }
     }
@@ -607,6 +632,12 @@ public:
     // 尝试对文件上锁（类似于flock，利用这个方法可以实现不同线程的同时安全操作）
     void lock(bool exclusive) override
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return ;
+
         if (!securefs::is_lock_enabled())
         {
             return;
@@ -925,6 +956,10 @@ void OSService::mkdir(StringRef path, unsigned mode) const
     if (CreateDirectoryW(npath.c_str(), nullptr) == 0)
     {
         DWORD err = GetLastError();
+        // 解决复制目录报错问题，复制目录仅调用mkdir系统调用，不像同层复制文件那么复杂
+        if (err == ERROR_ALREADY_EXISTS)
+            return ;
+
         THROW_WINDOWS_EXCEPTION_WITH_PATH(err, L"CreateDirectory", npath);
     }
 }
