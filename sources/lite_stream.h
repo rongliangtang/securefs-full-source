@@ -3,7 +3,6 @@
 #include "streams.h"
 
 #include <cryptopp/aes.h>
-#include <cryptopp/sm4.h>
 #include <cryptopp/gcm.h>
 #include <cryptopp/osrng.h>
 #include <cryptopp/rng.h>
@@ -20,19 +19,18 @@ namespace lite
     };
 
     // AESGCMCryptStream为AES-GCM算法的加密处理类，继承自BlockBasedStream类别
-    // 以block为单位处理，block为fuse文件系统的块大小
+    // 以block为单位处理，block为fuse文件系统的块大小？？
     class AESGCMCryptStream : public BlockBasedStream
     {
     private:
-        // 将AES改为SM4
         // 定义加密器
-        CryptoPP::GCM<CryptoPP::SM4>::Encryption m_encryptor;
+        CryptoPP::GCM<CryptoPP::AES>::Encryption m_encryptor;
         // 定义解密器
-        CryptoPP::GCM<CryptoPP::SM4>::Decryption m_decryptor;
+        CryptoPP::GCM<CryptoPP::AES>::Decryption m_decryptor;
         // m_stream是加密后的文件数据流
         std::shared_ptr<StreamBase> m_stream;
         // m_buffer是读取的某块的数据
-        // m_auxiliary存放附加消息（4byte block_number + padingg_size byte）
+        // m_auxiliary存放附加消息
         std::unique_ptr<byte[]> m_buffer, m_auxiliary;
         // m_iv_size默认为12
         // m_padding_size默认为0
@@ -88,7 +86,7 @@ namespace lite
                                    unsigned iv_size = 12,
                                    bool check = true,
                                    unsigned max_padding_size = 0,
-                                   CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption* padding_aes
+                                   CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption* padding_aes
                                    = nullptr);
 
         ~AESGCMCryptStream();

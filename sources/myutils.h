@@ -142,8 +142,7 @@ using std::experimental::optional;
 typedef uint64_t length_type;
 typedef uint64_t offset_type;
 
-// 将KEY_LENGTH从32改为16，注意使用到key_type的地方
-constexpr uint32_t KEY_LENGTH = 16, ID_LENGTH = 32, BLOCK_SIZE = 4096;
+constexpr uint32_t KEY_LENGTH = 32, ID_LENGTH = 32, BLOCK_SIZE = 4096;
 
 template <class T>
 inline std::unique_ptr<T[]> make_unique_array(size_t size)
@@ -307,7 +306,7 @@ struct id_hash
     }
 };
 
-// 
+//
 std::unordered_set<id_type, id_hash> find_all_ids(const std::string& basedir);
 
 // 获取用户的输入直到回车

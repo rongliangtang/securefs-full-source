@@ -192,11 +192,11 @@ namespace lite
         // 文本加密的key
         key_type m_content_key;
         // xattr的加密器，用AES-GCM算法
-        CryptoPP::GCM<CryptoPP::SM4>::Encryption m_xattr_enc;
+        CryptoPP::GCM<CryptoPP::AES>::Encryption m_xattr_enc;
         // xattr的解密器，用AES-GCM算法
-        CryptoPP::GCM<CryptoPP::SM4>::Decryption m_xattr_dec;
-        // padding加密器，用AES-ECB算法，加密padding數據
-        CryptoPP::ECB_Mode<CryptoPP::SM4>::Encryption m_padding_aes;
+        CryptoPP::GCM<CryptoPP::AES>::Decryption m_xattr_dec;
+        // padding加密器，用AES-ECB算法，什么作用？
+        CryptoPP::ECB_Mode<CryptoPP::AES>::Encryption m_padding_aes;
         // m_root为可以执行OSService类的shared_ptr
         std::shared_ptr<const securefs::OSService> m_root;
         // 这些size的作用是加密算法用的

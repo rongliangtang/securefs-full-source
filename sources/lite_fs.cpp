@@ -35,7 +35,7 @@ namespace lite
                            unsigned flags)
         : m_name_encryptor(name_key.data(), name_key.size())
         , m_content_key(content_key)
-        //, m_padding_aes(padding_key.data(), padding_key.size())
+        , m_padding_aes(padding_key.data(), padding_key.size())
         , m_root(std::move(root))
         , m_block_size(block_size)
         , m_iv_size(iv_size)
@@ -45,8 +45,6 @@ namespace lite
         byte null_iv[12] = {0};
         m_xattr_enc.SetKeyWithIV(xattr_key.data(), xattr_key.size(), null_iv, sizeof(null_iv));
         m_xattr_dec.SetKeyWithIV(xattr_key.data(), xattr_key.size(), null_iv, sizeof(null_iv));
-
-        m_padding_aes.SetKey(padding_key.data(), padding_key.size());
     }
 
     FileSystem::~FileSystem() {}
@@ -485,7 +483,7 @@ namespace lite
                 // 之后如果底层文件系统中目录项名的第一个为"."，说明这个目录项是隐藏文件(.securefs.json)，跳过处理
                 if (under_name[0] == '.')
                     continue;
-                
+
                 // 用try catch来捕获错误
                 try
                 {
@@ -550,7 +548,7 @@ namespace lite
             throwVFSException(EINVAL);
         return securefs::make_unique<LiteDirectory>(
             path.to_string(),
-            // 创建遍历数据目录的DirectoryTraverser对象，实际为OS類創建的UnixDirectoryTraverser多态或WindowsDirectoryTraverser多態
+            // 创建遍历数据目录的DirectoryTraverser对象，实际为UnixDirectoryTraverser多态
             m_root->create_traverser(translate_path(path, false)),
             this->m_name_encryptor,
             m_block_size,

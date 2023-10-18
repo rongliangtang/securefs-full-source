@@ -53,7 +53,7 @@ namespace lite
             const auto& master_key = ctx->opt->master_key;
             // typedef PODArray<byte, KEY_LENGTH> key_type;
             key_type name_key, content_key, xattr_key, padding_key;
-            // KEY_LENGTH = 16
+            // KEY_LENGTH = 32
             // 若master_key的size不是KEY_LENGTH三倍或四倍，则报错
             if (master_key.size() != 3 * KEY_LENGTH && master_key.size() != 4 * KEY_LENGTH)
                 throwInvalidArgumentException("Master key has wrong length");
@@ -69,7 +69,7 @@ namespace lite
             warn_if_key_not_random(name_key, __FILE__, __LINE__);
             warn_if_key_not_random(content_key, __FILE__, __LINE__);
             warn_if_key_not_random(xattr_key, __FILE__, __LINE__);
-            
+
             // max_padding_size在create的时候未设置数值则为0
             // 若master_key的size >= 4*KEY_LENGTH
             if (master_key.size() >= 4 * KEY_LENGTH)
@@ -154,13 +154,13 @@ namespace lite
         }
 
     }    // namespace
-    
+
     // 初始化文件系统：返回的ctx中的opt是一个MountOptions对象，存放了要用的master_key等关键信息
     // 这个函数实际做的是将private_data存的对象取出来放到一个结构体中，再将这个结构体对象放回provate_data中
     // TODO:为什么要用一个结构体做中介
     void* init(struct fuse_conn_info* fsinfo)
     {
-// 如果文件系統支持加强讀取目錄，在capable置相應標志位
+// 如果用的是WINFSP
 #ifdef FSP_FUSE_CAP_READDIR_PLUS
         fsinfo->want |= (fsinfo->capable & FSP_FUSE_CAP_READDIR_PLUS);
 #endif
@@ -248,11 +248,11 @@ namespace lite
                 // LockGuard模版类定义的对象在创建的时候会上锁，销毁的时候释放
                 LockGuard<File> lock_guard(*file, false);
                 // 如果是文件，则调用File类的fstat()函数
-                // 因为打开的文件涉及线程安全问题，所以需要用File类中的方法
+                // 因为打开的文件涉及线程安全问题，所以需要用File类
                 file->fstat(st);
                 return 0;
             }
-            // 如果是Directory多态，调用Directory子类中的as_dir()函数，返回Directory类型指针
+            // 如果是Directory多态，调用Directory子类中的as_file()函数，返回Directory类型指针
             // 否则返回nullptr
             auto dir = base->as_dir();
             if (dir)
@@ -414,7 +414,7 @@ namespace lite
     read(const char* path, char* buf, size_t size, fuse_off_t offset, struct fuse_file_info* info)
     {
         auto func = [=]()
-        {   
+        {
             // 获得File对象（info->fh转Base*转File*）
             // 之前在open()中获得对象后，再转为文件句柄存在info中，这里将句柄再转回对象
             // 注意fp这个File对象指针里面存放很多有效信息！
@@ -462,7 +462,6 @@ namespace lite
     }
 
     // 刷新缓存区数据到文件里(磁盘/控制台)，类似于linux系统调用中的fflush()
-    // 这个方法在close和release后会调用
     // 高级IO有缓冲区，可以使用fflush()，但是低级IO就不适用啦
     // 低级IO需要适用fsync()，将与OS有关的raw中的数据写入磁盘
     int flush(const char* path, struct fuse_file_info* info)
@@ -471,7 +470,6 @@ namespace lite
         {
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
-            // unix和win都没有实现这个函数，这个系统调用不重写是不影响数据从缓存写入磁盘的，后面应该有方法让其写回的
             fp->flush();
             return 0;
         };
@@ -485,7 +483,7 @@ namespace lite
         {
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
-            // 通过调用File类中的resize，明文进行截断后密文要进行相应的截断
+            // 通过调用File类中的resize，
             fp->resize(len);
             return 0;
         };
@@ -617,6 +615,7 @@ namespace lite
     {
         auto func = [=]()
         {
+            // 涉及
             auto fp = get_handle_as_file_checked(info);
             LockGuard<File> lock_guard(*fp, true);
             fp->fsync();
