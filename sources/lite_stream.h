@@ -20,7 +20,7 @@ namespace lite
     };
 
     // AESGCMCryptStream为AES-GCM算法的加密处理类，继承自BlockBasedStream类别
-    // 以block为单位处理，block为fuse文件系统的块大小？？
+    // 以block为单位处理，block为fuse文件系统的块大小
     class AESGCMCryptStream : public BlockBasedStream
     {
     private:

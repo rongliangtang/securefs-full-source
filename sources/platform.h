@@ -23,6 +23,9 @@ typedef ptrdiff_t ssize_t;
 
 #define __PRETTY_FUNCTION__ __FUNCTION__
 
+// 因为fuse会使用到flag，会利用到下面这些标志，但是只有unix才有
+// 所以利用winfsp实现flag判断的时候，需要拿出unix有的这些标志来用，然后转换为windows api操作标志
+
 #define O_RDONLY 0x0000   /* open for reading only */
 #define O_WRONLY 0x0001   /* open for writing only */
 #define O_RDWR 0x0002     /* open for reading and writing */
@@ -147,8 +150,7 @@ std::string narrow_string(WideStringRef str);
 void windows_init(void);
 #endif
 
-// os服务接口类（分为unix和window两个文件来实现），定义了一些路径操作、系统操作方法
-// 这个类还没有读懂哦？
+// os服务接口类（通過ifdef判斷os，分为unix和window两个文件来实现），定义了一些路径操作、系统操作方法
 class OSService
 {
 private:

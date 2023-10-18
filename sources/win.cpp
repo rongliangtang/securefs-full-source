@@ -22,15 +22,19 @@
 #include <sddl.h>
 #include <strsafe.h>
 
+/*windows的有关操作通过win32 api实现，这个库可以通过安装vs或可再发行程序包获得*/
+
 /*windows平台用的函数*/
 
 static void(WINAPI* best_get_time_func)(LPFILETIME) = nullptr;
 
+// 将两个dword32位表示的64位无符号数，拼接成uint64_t表示的无符号数
 static inline uint64_t convert_dword_pair(uint64_t low_part, uint64_t high_part)
 {
     return low_part | (high_part << 32);
 }
 
+// 将FILETIME格式的时间转换为unix格式的时间
 static void filetime_to_unix_time(const FILETIME* ft, struct fuse_timespec* out)
 {
     long long ll = convert_dword_pair(ft->dwLowDateTime, ft->dwHighDateTime) - 116444736000000000LL;
@@ -52,9 +56,12 @@ static const DWORD MAX_SINGLE_BLOCK = std::numeric_limits<DWORD>::max();
 
 namespace securefs
 {
+
+// windows异常类，继承SystemException类
 class WindowsException : public SystemException
 {
 private:
+    // 这里传入的err一般是getlasterr()win32 api获得的，获得的错误码是winerror.h中的
     DWORD err;
     const wchar_t* funcname;
     std::wstring path1, path2;
@@ -131,7 +138,12 @@ public:
         }
         return narrow_string(final_buffer.data());
     }
+    // 返回err属性
     DWORD win32_code() const noexcept { return err; }
+
+    // getlasterr()是win32 api，获得的错误码是winerror.h中的
+    // 将winerror.h中错误码转换为errno.h错误码
+    // 目的是让unix和win错误码保持一致
     int error_number() const noexcept override
     {
         static const int errorTable[] = {
@@ -404,6 +416,7 @@ public:
             EINVAL,       /* 266 */
             ENOTDIR,      /* ERROR_DIRECTORY		267 */
         };
+        // 根据err
         if (err >= 0 && err < array_length(errorTable))
             return errorTable[err];
         return EPERM;
@@ -437,12 +450,20 @@ public:
         throw WindowsException(code, exp, path1, path2);                                           \
     } while (0)
 
+// 檢查調用宏，如果調用失敗抛出異常
 #define CHECK_CALL(exp)                                                                            \
     if (!(exp))                                                                                    \
         THROW_WINDOWS_EXCEPTION(GetLastError(), L"" #exp);
 
+// 根據句柄獲取文件屬性，stat函數會用到
 static void stat_file_handle(HANDLE hd, struct fuse_stat* st)
 {
+    // 如果传入的句柄非法，则直接返回不执行后续代码
+    // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+    // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+    if (hd == INVALID_HANDLE_VALUE)
+        return ;
+
     memset(st, 0, sizeof(*st));
     BY_HANDLE_FILE_INFORMATION info;
     CHECK_CALL(GetFileInformationByHandle(hd, &info));
@@ -470,15 +491,25 @@ private:
     HANDLE m_handle;
 
 private:
+    // 写数据（每次写的数据长度最多32位）
     void write32(const void* input, offset_type offset, DWORD length)
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return ;
+
+        // ol表示offset，用两个dword表示64位
         OVERLAPPED ol;
         memset(&ol, 0, sizeof(ol));
         ol.Offset = static_cast<DWORD>(offset);
         ol.OffsetHigh = static_cast<DWORD>(offset >> 32);
 
         DWORD writelen;
+        // 写失败会抛出异常
         CHECK_CALL(WriteFile(m_handle, input, length, &writelen, &ol));
+        // 写的长度不对也会抛出异常
         if (writelen != length)
             throwVFSException(EIO);
     }
@@ -491,8 +522,16 @@ private:
             throwVFSException(EIO);
     }
 
+    // 读数据（每次读取的数据长度最多32位）
     length_type read32(void* output, offset_type offset, DWORD length)
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return 0;
+
+        // ol表示offset，用两个dword表示64位
         OVERLAPPED ol;
         memset(&ol, 0, sizeof(ol));
         ol.Offset = static_cast<DWORD>(offset);
@@ -523,10 +562,13 @@ private:
     }
 
 public:
+    // WindowsFileStream类的构造函数（打开or创建文件，获得文件描述符）
     explicit WindowsFileStream(WideStringRef path, int flags, unsigned mode)
         : m_handle(INVALID_HANDLE_VALUE)
     {
         DWORD access_flags = 0;
+        // 因为fuse会使用到flag，会利用到下面这些标志，但是只有unix才有
+        // 所以利用winfsp实现flag判断的时候，需要拿出unix有的这些标志来用，然后转换为windows api操作标志
         switch (flags & O_ACCMODE)
         {
         case O_RDONLY:
@@ -562,6 +604,7 @@ public:
             create_flags = OPEN_EXISTING;
         }
 
+        // 创建or打开文件，返回文件句柄
         m_handle = CreateFileW(path.c_str(),
                                access_flags,
                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -569,17 +612,32 @@ public:
                                create_flags,
                                FILE_ATTRIBUTE_NORMAL,
                                nullptr);
+        // 如果返回的文件句柄非法，抛出异常
         if (m_handle == INVALID_HANDLE_VALUE)
         {
             DWORD err = GetLastError();
+            // create->lock->read->write->stat
+            // 多个系统调用会执行，throw会中断后续系统调用的执行（猜测是这些调用在一份fuse代码里，中间抛出异常，后面当然不执行）
+            // 不用throw的话，需要防止上述系统调用去执行，看TODO
+            if (err == ERROR_FILE_EXISTS)
+                //throw WindowsException(err, L"这个异常不用理会");
+                return ;
+
             throw WindowsException(err, L"CreateFileW", path.to_string());
         }
     }
 
     ~WindowsFileStream() { CloseHandle(m_handle); }
 
+    // 尝试对文件上锁（类似于flock，利用这个方法可以实现不同线程的同时安全操作）
     void lock(bool exclusive) override
     {
+        // 如果传入的句柄非法，则直接返回不执行后续代码
+        // 目的是为了解决同一层目录下，复制文件会抛出异常的问题（此时句柄非法，无法执行后续代码）
+        // TODO:但是这样不知道会不会引发新的问题，比如在挂载点调用对应的系统调用，但传入非法句柄，看看fuse是否有针对这种情况处理
+        if (m_handle == INVALID_HANDLE_VALUE)
+            return ;
+
         if (!securefs::is_lock_enabled())
         {
             return;
@@ -594,6 +652,7 @@ public:
                               &o));
     }
 
+    // 尝试对文件解锁
     void unlock() noexcept override
     {
         if (!securefs::is_lock_enabled())
@@ -606,15 +665,20 @@ public:
             m_handle, 0, std::numeric_limits<DWORD>::max(), std::numeric_limits<DWORD>::max(), &o));
     }
 
+    // 关闭文件，通过关闭句柄实现（句柄有点像文件描述符）
     void close() noexcept override
     {
         CloseHandle(m_handle);
         m_handle = INVALID_HANDLE_VALUE;
     }
 
+    // 读数据（通过调用read32()实现）
+    // typedef uint64_t length_type;
+    // static const DWORD MAX_SINGLE_BLOCK = std::numeric_limits<DWORD>::max();
     length_type read(void* output, offset_type offset, length_type length) override
     {
         length_type total = 0;
+        // MAX_SINGLE_BLOCK表示一次读取的最大数据
         while (length > MAX_SINGLE_BLOCK)
         {
             length_type readlen = read32(output, offset, MAX_SINGLE_BLOCK);
@@ -645,8 +709,10 @@ public:
         return total;
     }
 
+    // 写数据（通过write32()实现）
     void write(const void* input, offset_type offset, length_type length) override
     {
+        // 表示一次能写的最大长度
         while (length > MAX_SINGLE_BLOCK)
         {
             write32(input, offset, MAX_SINGLE_BLOCK);
@@ -675,6 +741,7 @@ public:
         return SIZE.QuadPart;
     }
 
+    // windows不需要实现这个函数
     void flush() override {}
 
     void resize(length_type len) override
@@ -687,7 +754,9 @@ public:
 
     length_type optimal_block_size() const noexcept override { return 4096; }
 
+    // 将文件的内容从缓存同步到磁盘上，低级I/O用
     void fsync() override { CHECK_CALL(FlushFileBuffers(m_handle)); }
+
     void utimens(const struct fuse_timespec ts[2]) override
     {
         FILETIME access_time, mod_time;
@@ -703,6 +772,7 @@ public:
         }
         CHECK_CALL(SetFileTime(m_handle, nullptr, &access_time, &mod_time));
     }
+    // 獲取已打開文件的文件屬性，文件句柄已經指向文件，而不像OS類中指向數據目錄
     void fstat(struct fuse_stat* st) const override { stat_file_handle(m_handle, st); }
     bool is_sparse() const noexcept override { return true; }
 };
@@ -856,11 +926,13 @@ OSService::open_file_stream(StringRef path, int flags, unsigned mode) const
     return std::make_shared<WindowsFileStream>(norm_path(path), flags, mode);
 }
 
+// 删除文件
 void OSService::remove_file(StringRef path) const
 {
     CHECK_CALL(DeleteFileW(norm_path(path).c_str()));
 }
 
+// 删除目录
 void OSService::remove_directory(StringRef path) const
 {
     CHECK_CALL(RemoveDirectoryW(norm_path(path).c_str()));
@@ -877,25 +949,38 @@ void OSService::lock() const
             "Be careful not to mount the same data directory multiple times!\n");
 }
 
+// 创建目录
 void OSService::mkdir(StringRef path, unsigned mode) const
 {
     auto npath = norm_path(path);
     if (CreateDirectoryW(npath.c_str(), nullptr) == 0)
     {
         DWORD err = GetLastError();
+        // 解决复制目录报错问题，复制目录仅调用mkdir系统调用，不像同层复制文件那么复杂
+        if (err == ERROR_ALREADY_EXISTS)
+            return ;
+
         THROW_WINDOWS_EXCEPTION_WITH_PATH(err, L"CreateDirectory", npath);
     }
 }
 
+// 獲取文件系統的属性
 void OSService::statfs(struct fuse_statvfs* fs_info) const
 {
+    // 將存放屬性的結構體中數據全部置0
     memset(fs_info, 0, sizeof(*fs_info));
+    // ULARGE_INTEGER表示64位无符号整数值，實際上是一個結構體
     ULARGE_INTEGER FreeBytesAvailable, TotalNumberOfBytes, TotalNumberOfFreeBytes;
+    // typedef unsigned long DWORD;
     DWORD namemax = 0;
+    // CHECK_CALL宏用於判斷執行結果，失敗則抛出異常
+    // GetDiskFreeSpaceExW()检索有关磁盘卷上可用空间量的信息，即总空间量、可用空间总量以及与调用线程关联的用户可用的可用空间总量。
     CHECK_CALL(GetDiskFreeSpaceExW(
         norm_path(".").c_str(), &FreeBytesAvailable, &TotalNumberOfBytes, &TotalNumberOfFreeBytes));
+    // GetVolumeInformationByHandleW()检索与指定文件关联的文件系统和卷的相关信息。
     CHECK_CALL(GetVolumeInformationByHandleW(
         m_root_handle, nullptr, 0, nullptr, &namemax, nullptr, nullptr, 0));
+    // 將獲取的文件系統信息放入結構體中
     auto maximum = static_cast<unsigned>(-1);
     fs_info->f_bsize = 4096;
     fs_info->f_frsize = fs_info->f_bsize;
@@ -908,20 +993,25 @@ void OSService::statfs(struct fuse_statvfs* fs_info) const
     fs_info->f_namemax = namemax;
 }
 
+// 改变文件的访问和修改时间（纳秒级），利用 best_get_time_func() 实现
 void OSService::utimens(StringRef path, const fuse_timespec ts[2]) const
 {
     FILETIME atime, mtime;
+    // 如果传入的ts不存在，调用windwos api获取
     if (!ts)
     {
+        // best_get_time_func()是目前系统上能获取精度最准的函数
         best_get_time_func(&atime);
         mtime = atime;
     }
+    // 如果传入的ts存在，unix time转化为FILETIME格式
     else
     {
         atime = unix_time_to_filetime(ts);
         mtime = unix_time_to_filetime(ts + 1);
     }
     auto npath = norm_path(path);
+    // 利用CreateFileW()打开文件
     HANDLE hd = CreateFileW(npath.c_str(),
                             FILE_WRITE_ATTRIBUTES,
                             FILE_SHARE_READ | FILE_SHARE_DELETE | FILE_SHARE_WRITE,
@@ -931,19 +1021,27 @@ void OSService::utimens(StringRef path, const fuse_timespec ts[2]) const
                             nullptr);
     if (hd == INVALID_HANDLE_VALUE)
         THROW_WINDOWS_EXCEPTION_WITH_PATH(GetLastError(), L"CreateFileW", npath);
+    // 记得关闭句柄
     DEFER(CloseHandle(hd));
+    // 设置文件的的时间
     CHECK_CALL(SetFileTime(hd, nullptr, &atime, &mtime));
 }
 
+// 獲取文件的屬性
 bool OSService::stat(StringRef path, struct fuse_stat* stat) const
 {
+    // 如果路徑為根數據目錄，且跟數據目錄的句柄是合法的，那麽使用這個句柄就行
+    // 這種情況經常發生
     if (path == "." && m_root_handle != INVALID_HANDLE_VALUE)
     {
         // Special case which occurs very frequently
+        // 根據句柄獲取文件信息
         stat_file_handle(m_root_handle, stat);
         return true;
     }
+    // 將相對路徑和數據目錄進行拼接
     auto npath = norm_path(path);
+    // 创建或打开文件或 I/O 设备，返回文件句柄
     HANDLE handle = CreateFileW(npath.c_str(),
                                 FILE_READ_ATTRIBUTES,
                                 FILE_SHARE_READ | FILE_SHARE_DELETE | FILE_SHARE_WRITE,
@@ -951,6 +1049,7 @@ bool OSService::stat(StringRef path, struct fuse_stat* stat) const
                                 OPEN_EXISTING,
                                 FILE_FLAG_BACKUP_SEMANTICS,
                                 nullptr);
+    // 如果句柄非法，抛出異常
     if (handle == INVALID_HANDLE_VALUE)
     {
         DWORD err = GetLastError();
@@ -959,11 +1058,15 @@ bool OSService::stat(StringRef path, struct fuse_stat* stat) const
         THROW_WINDOWS_EXCEPTION_WITH_PATH(err, L"CreateFileW", npath);
     }
 
+    // 延遲執行，抛出異常
     DEFER(CloseHandle(handle));
+    // 根據句柄獲取文件信息
     stat_file_handle(handle, stat);
+
     return true;
 }
 
+// 这几个系统调用，unix才有，所以win不进行重写
 void OSService::link(StringRef source, StringRef dest) const { throwVFSException(ENOSYS); }
 void OSService::chmod(StringRef path, fuse_mode_t mode) const { (void)0; }
 void OSService::chown(StringRef, fuse_uid_t, fuse_gid_t) const { (void)0; }
@@ -974,10 +1077,12 @@ ssize_t OSService::readlink(StringRef path, char* output, size_t size) const
 }
 void OSService::symlink(StringRef source, StringRef dest) const { throwVFSException(ENOSYS); }
 
+// 重命名操作
 void OSService::rename(StringRef a, StringRef b) const
 {
     auto wa = norm_path(a);
     auto wb = norm_path(b);
+    // 不用宏，是为了简化抛出异常的信息
     if (!MoveFileExW(wa.c_str(), wb.c_str(), MOVEFILE_REPLACE_EXISTING))
         THROW_WINDOWS_EXCEPTION_WITH_TWO_PATHS(GetLastError(), L"MoveFileExW", wa, wb);
 }
@@ -988,15 +1093,21 @@ int64_t OSService::raise_fd_limit() noexcept
     return std::numeric_limits<int32_t>::max();
 }
 
+// windows目錄遍歷類，基礎 DirectoryTraverser類
 class WindowsDirectoryTraverser final : public DirectoryTraverser
 {
 private:
+    // 目錄路徑
     std::wstring m_pattern;
+    // 當前句柄對應文件的信息（結構體）
     WIN32_FIND_DATAW m_data;
+    // 目錄中某個目錄項的句柄
     HANDLE m_handle;
+    // 表示是否在目錄項中開頭
     bool m_is_initial;
 
 public:
+    // 構造函數
     explicit WindowsDirectoryTraverser(std::wstring pattern)
         : m_pattern(std::move(pattern)), m_handle(INVALID_HANDLE_VALUE), m_is_initial(false)
     {
@@ -1009,25 +1120,34 @@ public:
             FindClose(m_handle);
     }
 
+    // 將目錄遍歷指針移到目錄項開頭
     void rewind() override
     {
+        // 如果m_is_initial為true，表示已經在目錄項開頭
         if (m_is_initial)
             return;    // Already at the beginning
+        // 如果句柄非法，關閉句柄對應的文件
         if (m_handle != INVALID_HANDLE_VALUE)
             FindClose(m_handle);
+        // 將句柄指向目錄中第一個目錄項
+        // FindFirstFileW()返回找到目錄中的第一个文件或目录的句柄和信息
         m_handle = FindFirstFileW(m_pattern.c_str(), &m_data);
+        // 如果句柄非法，抛出異常
         if (m_handle == INVALID_HANDLE_VALUE)
         {
             THROW_WINDOWS_EXCEPTION_WITH_PATH(GetLastError(), L"FindFirstFileW", m_pattern);
         }
     }
 
+    // 移動到下一個目錄下
     bool next(std::string* name, struct fuse_stat* st) override
     {
+        // 如果在開頭，將開頭你好標志改爲false
         if (m_is_initial)
         {
             m_is_initial = false;
         }
+        // 如果不是在开头，判断能不能找到下一个
         else
         {
             if (!FindNextFileW(m_handle, &m_data))
@@ -1039,15 +1159,21 @@ public:
             }
         }
 
+        // 将当前文件信息中的文件名转换为窄字符串，赋值给传入的name
         if (name)
             *name = narrow_string(m_data.cFileName);
+        // 将当前文件信息中一些信息赋值给传入的st
         if (st)
         {
+            // 在st或上相应目录or文件标志位
             if (m_data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
                 st->st_mode = 0755 | S_IFDIR;
             else
                 st->st_mode = 0755 | S_IFREG;
+            // 将两个dword32位表示的64位无符号数，拼接成uint64_t表示的无符号数
             st->st_size = convert_dword_pair(m_data.nFileSizeLow, m_data.nFileSizeHigh);
+            // 因为fuse中文件结构体是用unix格式的时间表示的，winfsp中实现的fuse也是
+            // 所以需要将FILETIME格式的时间转换为unix格式的时间
             filetime_to_unix_time(&m_data.ftCreationTime, &st->st_birthtim);
             filetime_to_unix_time(&m_data.ftLastAccessTime, &st->st_atim);
             filetime_to_unix_time(&m_data.ftLastWriteTime, &st->st_mtim);
@@ -1160,18 +1286,26 @@ std::wstring widen_string(StringRef str)
     return result;
 }
 
+// 将宽字符数组转换为窄字符数组
+// typedef BasicStringRef<wchar_t> WideStringRef;
 std::string narrow_string(WideStringRef str)
 {
+    // 如果str为空，返回空
     if (str.empty())
     {
         return {};
     }
+    // 如果str的size超过了int的限制，抛出异常
     if (str.size() >= std::numeric_limits<int>::max())
         throwInvalidArgumentException("String too long");
+    // Windows提供的宽字符转窄字符函数，不具有通用性
+    // 这里调用主要是看能不能转换
     int sz = WideCharToMultiByte(
         CP_UTF8, 0, str.c_str(), static_cast<int>(str.size()), nullptr, 0, 0, 0);
+    // 返回的结果<=0说明转换失败，抛出异常
     if (sz <= 0)
         THROW_WINDOWS_EXCEPTION(GetLastError(), L"WideCharToMultiByte");
+    // 创建窄字符数组，进行转换
     std::string result(sz, 0);
     WideCharToMultiByte(
         CP_UTF8, 0, str.c_str(), static_cast<int>(str.size()), &result[0], sz, 0, 0);
@@ -1180,6 +1314,7 @@ std::string narrow_string(WideStringRef str)
 
 namespace
 {
+    // 控制台测试结果
     struct ConsoleTestResult
     {
         bool is_console = false;
@@ -1187,8 +1322,10 @@ namespace
         DWORD mode = 0;
     };
 
+    // 测试fp是不是控制台
     ConsoleTestResult test_console(FILE* fp)
     {
+        // 不存在返回空
         if (!fp)
         {
             return {};
@@ -1198,13 +1335,16 @@ namespace
         {
             return {};
         }
+        // 获取与os有关的操作句柄
         auto h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+        // 非法返回空
         if (h == INVALID_HANDLE_VALUE)
         {
             return {};
         }
         ConsoleTestResult result;
         result.handle = h;
+        // 根据os操作句柄，判断是否为控制台模式
         result.is_console = GetConsoleMode(h, &result.mode);
         return result;
     }
@@ -1230,22 +1370,33 @@ std::unique_ptr<const char, void (*)(const char*)> get_type_name(const std::exce
 const char* PATH_SEPARATOR_STRING = "\\";
 const char PATH_SEPARATOR_CHAR = '\\';
 
+// windows环境下的一些初始化操作（设置控制台编码方式、缓冲区和获取时间函数等）
 void windows_init(void)
 {
+    // 获取控制台输出的代码页（代码页即命令行编码方式）
     static auto original_cp = ::GetConsoleOutputCP();
+    // 设置控制台的编码方式为UTF-8
     ::SetConsoleOutputCP(CP_UTF8);
+    // 程序结束的时候，把控制台的编码方式设置回去
     atexit([]() { ::SetConsoleOutputCP(original_cp); });
+    // 设置非法参数异常处理函数，这里写入空的匿名函数，即不做其他处理，会直接崩溃
     _set_invalid_parameter_handler(
         [](wchar_t const*, wchar_t const*, wchar_t const*, unsigned int, uintptr_t) {});
 
+    // 如果stdout是控制台模式
     if (test_console(stdout).is_console)
     {
+        // 设置stdout缓冲区大小，模式为每次从流中读入一行数据或向流中写入一行数据。
+        // 在遇到换行符前或者缓冲区满前，都咱存在系统自动申请的buffer中，而不会写到真正的磁盘文件上。
         setvbuf(stdout, nullptr, _IOLBF, 65536);
     }
+    // 如果stderr是控制台模式
     if (test_console(stderr).is_console)
     {
         setvbuf(stderr, nullptr, _IOLBF, 65536);
     }
+    // 延迟加载winfsp的dll，若不成功则输出提示并结束程序
+    // https://zhuanlan.zhihu.com/p/440971338
     if (::FspLoad(nullptr) != STATUS_SUCCESS)
     {
         fputs("SecureFS cannot load WinFsp. Please make sure you have WinFsp properly installed.\n",
@@ -1253,14 +1404,21 @@ void windows_init(void)
         abort();
     }
 
+    // dll是动态链接库，在内存中共用一份。不同于静态链接库，每个用到的程序在内存中都会单独有一份。
+    // 获得当前程序已加载dll的句柄
     HMODULE hd = GetModuleHandleW(L"kernel32.dll");
 
+    // decltype(best_get_time_func)表示自动推断best_get_time_func的类型，在前面定义好了
+    // best_get_time_func为GetSystemTimePreciseAsFileTime函数
+    // 为什么要从kernel32.dll中导出这个函数？通过头文件也可以，可能是为了兼容性？
     best_get_time_func
         = get_proc_address<decltype(best_get_time_func)>(hd, "GetSystemTimePreciseAsFileTime");
+    // 从kernel32.dll中获取失败则设置为GetSystemTimeAsFileTime函数
     if (best_get_time_func == nullptr)
         best_get_time_func = &GetSystemTimeAsFileTime;
 }
 
+// win 类中的mutex通过临界区实现
 Mutex::Mutex() { ::InitializeCriticalSectionAndSpinCount(&m_cs, 4000); }
 Mutex::~Mutex() { ::DeleteCriticalSection(&m_cs); }
 

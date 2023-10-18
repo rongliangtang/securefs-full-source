@@ -231,7 +231,8 @@ namespace lite
 
         // block_number块号,是AES-GCM的附加消息
         // 将block_number转为std::uint32_t类型
-        // 这里为啥要用小端存储？？
+        // CPU處理數據為小端存储（運算更高效），網絡傳輸數據為大端存儲（比較直觀）
+        // 將數值用小端存儲表示，存到m_auxiliary中
         to_little_endian(static_cast<std::uint32_t>(block_number), m_auxiliary.get());
 
         // 如果iv都为0，则需要随机生成一个iv
