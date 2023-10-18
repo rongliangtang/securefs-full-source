@@ -101,7 +101,7 @@ namespace internal
             return result;
         }
         
-        // 获取文件所在目录的FileGuard，为什么要遍历调用对象方法？？我猜测是因为根据前一目录的BtreeDirectory对象才能找到下一目录
+        // 获取文件所在目录的FileGuard，遍历调用对象方法，因为根据前一目录的BtreeDirectory对象才能找到下一目录
         id_type id;
         int type;
         // 遍历path中的每个component（最后一个文件名不遍历）
@@ -515,7 +515,7 @@ namespace operations
             // 获取文件系统上下文对象
             auto ctx = fuse_get_context();
             auto fs = internal::get_fs(ctx);
-            // 获取flags，通过&，可以取出相应的标志
+            // 获取flags，通过&，可以取出相应的标志（info->flag的值为打开文件的方式？）
             int rdwr = info->flags & O_RDWR;
             int wronly = info->flags & O_WRONLY;
             int append = info->flags & O_APPEND;

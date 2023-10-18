@@ -57,7 +57,7 @@ namespace operations
         }
 
     public:
-        // ShardedFileTableImpl为共享文件表实现类，操作密文文件主要是通过table来实现
+        // ShardedFileTableImpl为分片的文件表实现类，操作密文文件主要是通过FileTable来实现
         ShardedFileTableImpl table;
         // OSService类型的shared_ptr，里面存了数据根目录的文件描述符
         std::shared_ptr<const OSService> root;

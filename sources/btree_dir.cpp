@@ -57,6 +57,7 @@ static byte* write_and_forward(const PODArray<T, size>& value, byte* buffer, con
     return buffer + size;
 }
 
+//
 template <class T>
 static T read_little_endian_and_forward(const byte** buffer, const byte* end)
 {
@@ -155,7 +156,7 @@ void BtreeDirectory::read_free_page(uint32_t num, FreePage& fp)
     fp.prev = from_little_endian<uint32_t>(buffer + sizeof(uint32_t) * 2);
 }
 
-// 将当前节点附近空闲的节点写入到block中？？？还不确定
+// 将当前节点附近空闲的节点写入到block中
 void BtreeDirectory::write_free_page(uint32_t num, const FreePage& fp)
 {
     byte buffer[BLOCK_SIZE] = {};
@@ -219,6 +220,7 @@ void BtreeDirectory::deallocate_page(uint32_t num)
     FreePage fp;
     fp.prev = INVALID_PAGE;
     fp.next = get_start_free_page();
+    // 回收节点，将空闲块相关数据写入block
     write_free_page(num, fp);
 
     // 将当前空闲块的prev设置为num
@@ -235,6 +237,7 @@ void BtreeDirectory::deallocate_page(uint32_t num)
     set_num_free_page(get_num_free_page() + 1);
 }
 
+// 从buffer中取出当前节点的信息
 bool BtreeNode::from_buffer(const byte* buffer, size_t size)
 {
     const byte* end_of_buffer = buffer + size;
@@ -403,7 +406,7 @@ BtreeDirectory::Node* BtreeDirectory::retrieve_node(uint32_t parent_num, uint32_
     return result;
 }
 
-// ？？
+// 当空闲块>5并且空闲块占2/3以上时，重新构建B树
 void BtreeDirectory::subflush()
 {
     // 若空闲块>5并且空闲块占2/3以上是需要
@@ -449,6 +452,7 @@ BtreeNode* BtreeDirectory::get_root_node()
     return retrieve_node(INVALID_PAGE, pg);
 }
 
+// 获取一个目录项
 // 根据name获取到对应的id和type
 bool BtreeDirectory::get_entry_impl(const std::string& name, id_type& id, int& type)
 {
@@ -456,6 +460,7 @@ bool BtreeDirectory::get_entry_impl(const std::string& name, id_type& id, int& t
         throwVFSException(ENAMETOOLONG);
 
     BtreeNode* node;
+    // C和C++标准库中定义的一个有符号整数类型。它的主要目的是存储两个指针的差值。这在使用数组或其他连续的内存块时特别有用，因为你可能需要找出两个元素之间的距离或偏移量。
     ptrdiff_t entry_index;
     bool is_equal;
     std::tie(node, entry_index, is_equal) = find_node(name);
@@ -472,8 +477,8 @@ bool BtreeDirectory::get_entry_impl(const std::string& name, id_type& id, int& t
     return false;
 }
 
-// 根据节点号从（文件中？）读取出节点的信息存放到节点中
-// 每个节点按节点号的顺序存放在文件中？？
+// 根据节点号从（文件中）读取出节点的信息存放到节点中
+// 每个节点按节点号的顺序存放在文件中，占一个block的大小
 bool BtreeDirectory::read_node(uint32_t num, BtreeDirectory::Node& n)
 {
     if (num == INVALID_PAGE)
@@ -872,7 +877,7 @@ static std::string to_string(const std::vector<DirEntry>& entries)
     return result;
 }
 
-// ？？写节点关系图
+// 打印出节点关系图
 void BtreeDirectory::write_dot_graph(const BtreeNode* n, FILE* fp)
 {
     if (n->parent_page_number() != INVALID_PAGE)
@@ -891,6 +896,7 @@ void BtreeDirectory::write_dot_graph(const BtreeNode* n, FILE* fp)
         write_dot_graph(retrieve_node(n->page_number(), c), fp);
 }
 
+// 遍历B树（模版类）
 // 回调遍历（递归）直至n->children()为空
 template <class Callback>
 void BtreeDirectory::recursive_iterate(const BtreeNode* n, const Callback& cb, int depth)
@@ -902,7 +908,7 @@ void BtreeDirectory::recursive_iterate(const BtreeNode* n, const Callback& cb, i
         recursive_iterate(retrieve_node(n->page_number(), c), cb, depth + 1);
 }
 
-// ？？
+// 遍历B树（模版类），将遍历过的节点置脏
 template <class Callback>
 void BtreeDirectory::mutable_recursive_iterate(BtreeNode* n, const Callback& cb, int depth)
 {
@@ -918,11 +924,11 @@ void BtreeDirectory::iterate_over_entries_impl(const BtreeDirectory::callback& c
 {
     auto root = get_root_node();
     if (root)
-        //
+        // 遍历B树
         recursive_iterate(root, cb, 0);
 }
 
-// ？？
+// 重新构建B树
 void BtreeDirectory::rebuild()
 {
     auto root = get_root_node();

@@ -41,6 +41,7 @@ public:
 };
 
 // 文件表实现类，继承FileTable
+// 文件表存放了正在打开明文文件对应的密文缓存，用来加速访问密文文件，避免频繁从磁盘读密文文件
 // 实现了一个文件表，缓存了密文文件中打开文件和关闭文件的记录，用来加速访问密文文件，避免频繁从磁盘读密文文件
 class FileTableImpl final : public FileTable
 {
@@ -52,7 +53,7 @@ private:
 
 private:
     // MAX_NUM_CLOSED为m_files缓存表中的最大已关闭文件记录容量
-    // NUM_EJECT为每次从m_files缓存表中删除的已关闭文件最大数量
+    // NUM_EJECT为每次从m_files缓存表中删除的已关闭文件数量
     static const int MAX_NUM_CLOSED = 101, NUM_EJECT = 8;
 
 private:
@@ -90,8 +91,14 @@ public:
                            unsigned iv_size,
                            unsigned max_padding_size);
     ~FileTableImpl();
+    // 根据id，优先从m_files缓存中找，找不到则打开数据文件和元数据文件，返回一个FileBase类的多态指针
+    // 并将打开后获取的FileBase多态存入到m_files表中
     FileBase* open_as(const id_type& id, int type) override;
+    // 创建id对应的文件流并返回指针
+    // 并将打开后获取的FileBase多态存入到m_files表中
     FileBase* create_as(const id_type& id, int type) override;
+    // 关闭文件
+    // 并从m_files表中删去对应的记录
     void close(FileBase*) override;
     // 返回命令是否设置只读
     bool is_readonly() const noexcept override { return (m_flags & kOptionReadOnly) != 0; }
@@ -108,16 +115,18 @@ public:
     bool has_padding() const noexcept override { return m_max_padding_size > 0; }
 };
 
-// 公共文件表实现类，继承FileTable
+// 分片的文件表实现类，继承FileTable
 // 定义了一个FileTableImpl数组，利用id与FileTableImpl建立对应关系，用多个FileTableImpl来实现密文文件的操作
-// 为什么要用多个FileTableImpl来实现密文文件的操作？？？防止一个占用内存过大吗？
+// 用多个FileTableImpl来实现密文文件的操作的作用是：防止一个表过大？
 class ShardedFileTableImpl final : public FileTable
 {
 private:
     // m_shards为FileTableImpl对象vector，多个FileTableImpl来实现密文文件的操作
+    // 默认的大小是4
     std::vector<std::unique_ptr<FileTableImpl>> m_shards;
 
     // 返回一个FileTableImpl类指针，根据id从m_shards数组中取出对象
+    // id与FileTableImpl对象的对应关系如下，id前4个字节表示的无符号数对m_shards.size()进行取余
     FileTableImpl* get_shard_by_id(const id_type& id) noexcept;
 
 public:
@@ -146,6 +155,7 @@ public:
 class AutoClosedFileBase
 {
 private:
+    // FileTable* m_ft的作用是reset改变指向的时候，可以调用对应table中的close函数
     FileTable* m_ft;
     FileBase* m_fb;
 

@@ -221,14 +221,17 @@ int FileBase::get_real_type() { return type_for_mode(get_mode() & S_IFMT); }
 void FileBase::stat(struct fuse_stat* st)
 {
     // 调用系统调用::fstat，获取密文文件的stat
+    // 先用密文的st进行设置
     m_data_stream->fstat(st);
 
-    // 将flags[]中的数据赋值给st
+    // 一些关键的参数存放在对象的属性上，进行设置
+    // 将FileBase多态对象的m_flags[]中的数据赋值给st
     st->st_uid = get_uid();
     st->st_gid = get_gid();
     st->st_nlink = get_nlink();
     st->st_mode = get_mode();
     st->st_size = m_stream->size();
+    // st_blksize 是文件系统推荐的单次读/写的块大小。当你要对文件进行读写操作时，按照这个块大小进行可能会更高效。但这只是一个建议的大小，你完全可以选择其他的块大小进行操作。
     auto blk_sz = m_stream->optimal_block_size();
     if (blk_sz > 1 && blk_sz < std::numeric_limits<decltype(st->st_blksize)>::max())
     {

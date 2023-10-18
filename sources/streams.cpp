@@ -41,7 +41,6 @@ namespace internal
     class HMACStream final : public StreamBase
     {
     private:
-        //  m_key未发生作用啊？？？
         key_type m_key;
         id_type m_id;
         std::shared_ptr<StreamBase> m_stream;
@@ -57,9 +56,11 @@ namespace internal
 
         void run_mac(CryptoPP::MessageAuthenticationCode& calculator)
         {
+            // id+meta中的hmac值后面的所有数据作为计算hmac的输入
             calculator.Update(id().data(), id().size());
             std::array<byte, 4096> buffer;
             offset_type off = hmac_length;
+            // 循环读取数据
             while (true)
             {
                 auto rc = m_stream->read(buffer.data(), off, buffer.size());
@@ -79,6 +80,7 @@ namespace internal
         {
             if (!m_stream)
                 throwVFSException(EFAULT);
+            // 检查hmac是否正确
             if (check)
             {
                 std::array<byte, hmac_length> hmac;
@@ -108,6 +110,8 @@ namespace internal
             }
         }
 
+        // 刷新到磁盘函数
+        // 如果dirty，则重新计算hmac，将计算后的hmac存储到文件中
         void flush() override
         {
             if (!is_dirty)
@@ -135,8 +139,10 @@ namespace internal
             return m_stream->read(output, off + hmac_length, len);
         }
 
+        // 写入meta信息到meta文件中，所以置dirty为true
         void write(const void* input, offset_type off, length_type len) override
         {
+            // 这里留出了一个hmac的位置，把一块meta信息写入到meta文件中
             m_stream->write(input, off + hmac_length, len);
             is_dirty = true;
         }
@@ -407,14 +413,16 @@ namespace internal
     class AESGCMCryptStream final : public CryptStream, public HeaderBase
     {
     public:
+        // 返回iv的size，version 1中为32byte
         int get_iv_size() const noexcept { return m_iv_size; }
-
+        // 返回mca的size，为16byte
         unsigned get_mac_size() const noexcept { return 16; }
 
+        // 返回iv和mac的size，version1中为32+16=48byte
         unsigned get_meta_size() const noexcept { return get_iv_size() + get_mac_size(); }
-
+        // 返回meta中header的size，没有开启time功能的时候，为flags[]数组的大小32byte
         unsigned get_header_size() const noexcept { return m_header_size; }
-
+        // 返回加密header占用的内存大小，即32byte+和加密参数48byte=80byte+
         unsigned get_encrypted_header_size() const noexcept
         {
             return get_header_size() + get_iv_size() + get_mac_size();
@@ -431,6 +439,7 @@ namespace internal
         bool m_check;
 
     private:
+        // 返回某个block对应的meta起始位置，即iv起始位置
         length_type meta_position_for_iv(offset_type block_num) const noexcept
         {
             return get_encrypted_header_size() + get_meta_size() * (block_num);

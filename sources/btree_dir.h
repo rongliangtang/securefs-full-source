@@ -59,7 +59,7 @@ public:
 class BtreeNode
 {
 private:
-    // 父节点号、自己节点号
+    // 无符号32位整数类型的父节点号、自己节点号
     uint32_t m_parent_num, m_num;
     // 孩子节点号vector
     std::vector<uint32_t> m_child_indices;
@@ -132,13 +132,13 @@ public:
     const std::vector<DirEntry>& entries() const noexcept { return m_entries; }
     // 获取孩子节点号，返回值是常量
     const std::vector<uint32_t>& children() const noexcept { return m_child_indices; }
-    // 获取获取当前节点中的记录，同时节点置脏
+    // 获取获取当前节点中的记录，同时节点置脏（此时获取后，会进行节点更改操作，所以置脏）
     std::vector<DirEntry>& mutable_entries() noexcept
     {
         m_dirty = true;
         return m_entries;
     }
-    // 获取孩子节点号，同时节点置脏
+    // 获取孩子节点号，同时节点置脏（此时获取后，会进行节点更改操作，所以置脏）
     std::vector<uint32_t>& mutable_children() noexcept
     {
         m_dirty = true;
@@ -160,7 +160,7 @@ private:
     class FreePage; //空闲的节点？？
 
 private:
-    // unordered_map容器，里面存放了节点号及其对应的节点对象，存放在内存中
+    // unordered_map容器，里面存放了节点号及其对应的节点对象，存放在内存中（实现缓存节点功能，加快节点访问速度）
     std::unordered_map<uint32_t, std::unique_ptr<Node>> m_node_cache;
 
 private:
@@ -170,11 +170,11 @@ private:
     void read_free_page(uint32_t, FreePage&) THREAD_ANNOTATION_REQUIRES(*this);
     // 将节点信息写入到节点号对应的block中
     void write_node(uint32_t, const Node&) THREAD_ANNOTATION_REQUIRES(*this);
-    // 将当前空闲节点附近空闲的节点写入到当前节点中？？？还不确定
+    // 将当前空闲节点附近空闲的节点写入到当前节点中对应的block中
     void write_free_page(uint32_t, const FreePage&) THREAD_ANNOTATION_REQUIRES(*this);
     // 回收块（节点）
     void deallocate_page(uint32_t) THREAD_ANNOTATION_REQUIRES(*this);
-    // 分配空闲块给节点
+    // 分配空闲块给节点，返回空闲块号
     uint32_t allocate_page() THREAD_ANNOTATION_REQUIRES(*this);
 
     // 检索节点（从m_node_cache检索，若不在则创建并放入m_node_cache中）
@@ -185,7 +185,7 @@ private:
     void del_node(Node*) THREAD_ANNOTATION_REQUIRES(*this);
     // 获取根结点（从m_flags[4]中取出）
     Node* get_root_node() THREAD_ANNOTATION_REQUIRES(*this);
-    // 刷新m_node_cache中的数据到文件中，根据每个结点的脏位去决定是否刷新该记录
+    // 刷新m_node_cache中的数据到文件中，根据每个结点的脏位去决定是否刷新
     void flush_cache() THREAD_ANNOTATION_REQUIRES(*this);
     // 将m_node_cache清空
     void clear_cache() THREAD_ANNOTATION_REQUIRES(*this);
@@ -222,14 +222,14 @@ private:
 
     // 判断某个子树是否合法
     bool validate_node(const Node* n, int depth) THREAD_ANNOTATION_REQUIRES(*this);
-    // ？？
+    // 打印出关系节点图
     void write_dot_graph(const Node*, FILE*) THREAD_ANNOTATION_REQUIRES(*this);
 
-    // 
+    // 遍历B树（模版类）
     template <class Callback>
     void recursive_iterate(const Node* n, const Callback& cb, int depth)
         THREAD_ANNOTATION_REQUIRES(*this);
-    // 
+    // 遍历B树（模版类），将遍历过的节点置脏（重新构建B树函数调用，所以需要将节点置脏）
     template <class Callback>
     void mutable_recursive_iterate(Node* n, const Callback& cb, int depth)
         THREAD_ANNOTATION_REQUIRES(*this);
@@ -251,6 +251,7 @@ protected:
         THREAD_ANNOTATION_REQUIRES(*this);
     bool remove_entry_impl(const std::string& name, id_type& id, int& type) override
         THREAD_ANNOTATION_REQUIRES(*this);
+    // 遍历目录项，调用遍历B树函数实现（读取文件中数据，不需要将节点置脏）
     void iterate_over_entries_impl(const callback&) override THREAD_ANNOTATION_REQUIRES(*this);
 
 public:

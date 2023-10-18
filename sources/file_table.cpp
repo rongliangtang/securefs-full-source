@@ -53,7 +53,7 @@ private:
     // 一级目录的字节数、二级目录的字节数
     static const size_t FIRST_LEVEL = 1, SECOND_LEVEL = 5;
 
-    // 根据id计算出文件的一级目录和二级目录，及数据文件名和元数据文件名
+    // 根据id，读取出密文数据文件和meta文件的路径
     // 一级目录1个字节，二级目录5个字节
     static void calculate_paths(const securefs::id_type& id,
                                 std::string& first_level_dir,
@@ -198,7 +198,7 @@ FileTableImpl::FileTableImpl(int version,
     , m_root(root)
 {
     memcpy(m_master_key.data(), master_key.data(), master_key.size());
-    // 根据version来确定对文件表的操作方法
+    // 根据version来确定对文件的操作方法
     switch (version)
     {
     case 1:
@@ -221,7 +221,9 @@ FileTableImpl::~FileTableImpl()
         finalize(pair.second);
 }
 
-// 根据id，优先从m_files缓存中找，找不到则打开数据文件和元数据文件，返回一个FileBase类的多态type指针
+// 根据id，优先从m_files缓存中找，找不到则打开数据文件和元数据文件，返回一个FileBase类的多态指针
+// 并将打开后获取的FileBase多态存入到m_files表中
+// type表示文件类型
 FileBase* FileTableImpl::open_as(const id_type& id, int type)
 {
     LockGuard<Mutex> lg(m_lock);
@@ -271,6 +273,7 @@ FileBase* FileTableImpl::open_as(const id_type& id, int type)
 }
 
 // 创建id对应的文件流并返回指针
+// 并将打开后获取的FileBase多态存入到m_files表中
 FileBase* FileTableImpl::create_as(const id_type& id, int type)
 {
     // 若只读则抛出异常
@@ -317,6 +320,7 @@ FileBase* FileTableImpl::create_as(const id_type& id, int type)
 }
 
 // 关闭文件
+// 并从m_files表中删去对应的记录
 void FileTableImpl::close(FileBase* fb)
 {
     if (!fb)

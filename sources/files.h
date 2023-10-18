@@ -52,6 +52,7 @@ private:
     // 对应密文文件的id
     const id_type m_id;
     // 原子类型的密文flags，存放了mode、uid、gid、root_page、nlink、start_free_page、num_free_page
+    // root_page、nlink、start_free_page、num_free_page这几个参数是Directory系列对象才有用的，用来利用空闲节点
     std::atomic<uint32_t> m_flags[NUM_FLAGS];
     // fuse_timespec实际为timespec结构体，存放着自1970年7月1日（UTC）以来经过的秒和纳秒
     // atime表示最后访问时间
@@ -363,6 +364,8 @@ public:
     }
 };
 
+// 普通密文文件对应的对象，继承FileBase类
+// 包含密文文件数据的读取和写入操作函数
 class RegularFile : public FileBase
 {
 public:
@@ -401,6 +404,8 @@ public:
     }
 };
 
+// 符号链接文件对应的对象，继承FileBase类
+// 包含密文文件中符号链接文件的相关特殊操作
 class Symlink : public FileBase
 {
 public:
@@ -430,6 +435,8 @@ public:
     }
 };
 
+// 目录文件对应的对象，继承FileBase类
+// 包含目录项读取和写入等目录项操作函数（目录项用B树进行存储，存储在？）
 class Directory : public FileBase
 {
 public:
@@ -446,9 +453,11 @@ public:
     int type() const noexcept override { return class_type(); }
 
 public:
+    // typedef声明允许你定义一个名为callback的函数对象类型，它接受一个字符串引用、一个id_type引用和一个整数，然后返回一个布尔值。
     typedef std::function<bool(const std::string&, const id_type&, int)> callback;
 
-    // 根据name获取id和type
+    // 获取一个目录项
+    // 根据name获取目录项，id和type
     bool get_entry(const std::string& name, id_type& id, int& type)
         THREAD_ANNOTATION_REQUIRES(*this)
     {
