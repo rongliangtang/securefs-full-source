@@ -187,8 +187,9 @@ public:
     ssize_t getxattr(const char* name, void* value, size_t size) override
     {
         ssize_t rc = ::fgetxattr(m_fd, name, value, size, 0, 0);
-        if (rc < 0)
-            THROW_POSIX_EXCEPTION(errno, "fgetxattr");
+        // 关闭fgetxattr系统调用报错，许多请求系统和应用程序鲁莽发出的，它们并不知道这个扩展属性是否存在，所以会导致大量报错。
+//        if (rc < 0)
+//            THROW_POSIX_EXCEPTION(errno, "fgetxattr");
         return rc;
     }
 
