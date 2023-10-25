@@ -166,6 +166,7 @@ FileBase::FileBase(std::shared_ptr<FileStream> data_stream,
     m_xattr_dec.SetKeyWithIV(
         generated_keys + 2 * KEY_LENGTH, KEY_LENGTH, null_iv, array_length(null_iv));
 
+    // padding_size = padding_key mod max_padding_size
     if (max_padding_size > 0)
     {
         warn_if_key_not_random(generated_keys, sizeof(generated_keys), __FILE__, __LINE__);
@@ -174,10 +175,13 @@ FileBase::FileBase(std::shared_ptr<FileStream> data_stream,
                                   CryptoPP::Integer::UNSIGNED,
                                   CryptoPP::BIG_ENDIAN_ORDER);
         auto padding_size = static_cast<unsigned>(integer.Modulo(max_padding_size + 1));
+        // 如果开启了padding功能，m_stream会从AESGCMCryptStream重置为PaddedStream
+        // PaddedStream中的m_delegate属性指向AESGCMCryptStream
         m_stream = std::make_shared<PaddedStream>(std::move(m_stream), padding_size);
     }
 }
 
+// 根据是否开启存储时间戳功能读取header
 void FileBase::read_header()
 {
     for (auto& f : m_flags)
@@ -269,7 +273,7 @@ void FileBase::flush()
         size_t header_size = m_store_time ? EXTENDED_HEADER_SIZE : HEADER_SIZE;
         auto header = make_unique_array<byte>(header_size);
         memset(header.get(), 0, header_size);
-        // 为什么要把header里面存的属性都转换为小端存储的方式？？？
+        // 为什么要把header里面存的属性都转换为小端存储的方式？
         // 在本机下测试，默认用的是小端存储
         for (size_t i = 0; i < NUM_FLAGS; ++i)
         {

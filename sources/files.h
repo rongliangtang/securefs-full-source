@@ -68,7 +68,7 @@ private:
     // xattr加密器和解密器，用AES_GCM算法
     CryptoPP::GCM<CryptoPP::AES>::Encryption m_xattr_enc THREAD_ANNOTATION_GUARDED_BY(*this);
     CryptoPP::GCM<CryptoPP::AES>::Decryption m_xattr_dec THREAD_ANNOTATION_GUARDED_BY(*this);
-    // m_dirty表示属性是否脏？？
+    // m_dirty表示header是否脏，因为header里存放的一些数据不以来底层文件系统，用于flunsh这些数据到磁盘
     bool m_dirty THREAD_ANNOTATION_GUARDED_BY(*this);
     // m_check表示??
     // m_store_time表示要不要存储时间戳

@@ -188,6 +188,9 @@ make_cryptstream_aes_gcm(std::shared_ptr<StreamBase> data_stream,
                          unsigned iv_size,
                          unsigned header_size = 32);
 
+// 实现padding功能的类
+// padding类中的m_delegate属性指向AESGCMCryptStream对象，故可以利用其调用其的read和write等方法
+// 实现原理就是空掉前面m_padding_size哥字节的数据不写，此时里面的数据为脏数据
 class PaddedStream final : public StreamBase
 {
 public:

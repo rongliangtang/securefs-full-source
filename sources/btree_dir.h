@@ -16,7 +16,7 @@ namespace securefs
 const uint32_t INVALID_PAGE = -1;
 // b树的最大深度
 const int BTREE_MAX_DEPTH = 32;
-// b树的最大记录数量（14阶b树？？）
+// b树的最大记录数量（14阶b树）
 const int BTREE_MAX_NUM_ENTRIES = 13;
 
 // static_assert关键字利用判断式，帮助我们在编译的时候发现错误
@@ -157,7 +157,7 @@ private:
     // 定义别名
     typedef BtreeNode Node; // 一个节点
     typedef DirEntry Entry; // 一个节点中的一条记录
-    class FreePage; //空闲的节点？？
+    class FreePage; //空闲的节点
 
 private:
     // unordered_map容器，里面存放了节点号及其对应的节点对象，存放在内存中（实现缓存节点功能，加快节点访问速度）

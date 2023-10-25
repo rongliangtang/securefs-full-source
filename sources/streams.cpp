@@ -38,6 +38,8 @@ namespace internal
         std::string message() const override { return m_msg; }
     };
 
+    // 这个类就是操作meta文件的类，包括计算hmac，读写iv部分数据。
+    // 操作meta文件中的header的方法，写在AESGCMCryptStream类中了，继承自HeaderBase
     class HMACStream final : public StreamBase
     {
     private:
@@ -471,6 +473,7 @@ namespace internal
             , m_header_size(header_size)
             , m_check(check)
         {
+            // 这里设置的IV没有关系，实际用的IV还是加密的时候设置的
             const byte null_iv[12] = {};
             m_enc.SetKeyWithIV(data_key.data(), data_key.size(), null_iv, array_length(null_iv));
             m_dec.SetKeyWithIV(data_key.data(), data_key.size(), null_iv, array_length(null_iv));
